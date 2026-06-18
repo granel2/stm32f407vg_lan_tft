@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Cortex Debug (ST-Link)",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "executable": "${workspaceFolder}/build/stm32f407vg_lan_v1.elf",
+      "cwd": "${workspaceFolder}",
+      "device": "STM32F407VG",
+      "configFiles": [
+        "interface/stlink.cfg",
+        "target/stm32f4x.cfg"
+      ],
+      "svdFile": "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f407xx.svd",
+      "runToEntryPoint": "main"
+    }
+  ]
+}

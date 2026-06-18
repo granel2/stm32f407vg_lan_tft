@@ -1,0 +1,12 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+set(CMAKE_C_COMPILER arm-none-eabi-gcc CACHE STRING "ARM GCC compiler" FORCE)
+set(CMAKE_ASM_COMPILER arm-none-eabi-gcc CACHE STRING "ARM GCC assembler" FORCE)
+set(CMAKE_CXX_COMPILER arm-none-eabi-g++ CACHE STRING "ARM G++ compiler" FORCE)
+set(CMAKE_OBJCOPY arm-none-eabi-objcopy CACHE STRING "ARM objcopy" FORCE)
+set(CMAKE_SIZE arm-none-eabi-size CACHE STRING "ARM size" FORCE)
+set(CMAKE_AR arm-none-eabi-ar CACHE STRING "ARM archiver" FORCE)
+set(CMAKE_RANLIB arm-none-eabi-ranlib CACHE STRING "ARM ranlib" FORCE)
+set(CMAKE_NM arm-none-eabi-nm CACHE STRING "ARM nm" FORCE)

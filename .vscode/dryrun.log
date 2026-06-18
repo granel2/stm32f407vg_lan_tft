@@ -1,0 +1,6 @@
+make.exe --dry-run --always-make --keep-going --print-directory
+make: Entering directory '/e/MEGAsync_R91/Mega_Git_R91/VSCode/stm32f407_lan/stm32f407vg_lan_v1'
+make: Leaving directory '/e/MEGAsync_R91/Mega_Git_R91/VSCode/stm32f407_lan/stm32f407vg_lan_v1'
+ 
+make: *** No targets specified and no makefile found.  Stop.
+

@@ -1,0 +1,21 @@
+# VS Code personal settings (keep essential configs)
+.vscode/extensions.json.bak
+.vscode/settings.local.json
+
+# Build output
+build/
+*.elf
+*.bin
+*.hex
+*.lst
+*.map
+
+# Keil build artifacts
+EWARM/stm32f407vg_lan_v1/Exe/
+EWARM/stm32f407vg_lan_v1/Obj/
+EWARM/stm32f407vg_lan_v1/List/
+
+# System files
+*.swp
+*.DS_Store
+Thumbs.db

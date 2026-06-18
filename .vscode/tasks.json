@@ -1,0 +1,73 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CMake: Configure",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-G",
+        "Ninja",
+        "-S",
+        ".",
+        "-B",
+        "build",
+        "-DCMAKE_TOOLCHAIN_FILE=toolchain-arm-none-eabi.cmake"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "CMake: Build",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--config",
+        "Release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Flash STM32F407VG",
+      "type": "shell",
+      "command": "openocd",
+      "args": [
+        "-f",
+        "interface/stlink.cfg",
+        "-f",
+        "target/stm32f4x.cfg",
+        "-c",
+        "init",
+        "-c",
+        "reset halt",
+        "-c",
+        "stm32f4x mass_erase 0",
+        "-c",
+        "flash write_image build/stm32f407vg_lan_v1.bin 0x08000000",
+        "-c",
+        "verify_image build/stm32f407vg_lan_v1.bin 0x08000000",
+        "-c",
+        "reset run",
+        "-c",
+        "exit"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

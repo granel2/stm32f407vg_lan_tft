@@ -1,0 +1,21 @@
+{
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "cortex-debug.openocdPath": "C:/OpenOCD/bin/openocd.exe",
+  "cortex-debug.armToolchainPath": "C:/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin",
+  "cortex-debug.gdbPath": "C:/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin/arm-none-eabi-gdb.exe",
+  "files.exclude": {
+    "**/Exe": true,
+    "**/Obj": true,
+    "**/List": true,
+    "**/.vs": true,
+    "**/.vscode-test": true
+  },
+  "cmake.cmakePath": "cube-cmake",
+  "cmake.configureArgs": [
+    "-DCMAKE_COMMAND=cube-cmake"
+  ],
+  "cmake.preferredGenerators": [
+    "Ninja"
+  ],
+  "cmake.configureOnOpen": true
+}
