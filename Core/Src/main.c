@@ -130,9 +130,44 @@ int main(void)
     sys_check_timeouts();
 
     /* Only talk to the server once we actually have an IP (DHCP-assigned). */
-    if (netif_is_up(&gnetif) && !ip4_addr_isany_val(*netif_ip4_addr(&gnetif)))
     {
-      tcp_echo_client_poll();
+      uint8_t has_ip = (netif_is_up(&gnetif) && !ip4_addr_isany_val(*netif_ip4_addr(&gnetif))) ? 1U : 0U;
+
+      if (has_ip)
+      {
+        tcp_echo_client_poll();
+      }
+
+      /* Watchdog: DHCP lease loss/renewal clears the netif's IP
+         (dhcp_release_and_stop() -> netif_set_addr(ANY)) until a fresh
+         lease completes - confirmed in lwIP source (dhcp.c). While the IP
+         is missing, tcp_echo_client_poll() above is skipped entirely, so
+         the existing "3 failed TCP connects -> ethernetif_reset()" recovery
+         path never gets a chance to run either - there is otherwise no
+         self-healing at all for a stuck DHCP renewal. Observed on real
+         hardware: IP missing for an entire hour with no recovery (see
+         PROJECT_GUIDE.md). DHCP on a healthy LAN completes in well under a
+         second, so anything stuck this long needs the same hardware-level
+         kick used for wedged TCP. */
+      #define DHCP_STUCK_TIMEOUT_MS 90000U
+      {
+        static uint32_t ip_missing_since = 0;
+
+        if (has_ip)
+        {
+          ip_missing_since = 0;
+        }
+        else if (ip_missing_since == 0)
+        {
+          ip_missing_since = HAL_GetTick();
+        }
+        else if ((HAL_GetTick() - ip_missing_since) >= DHCP_STUCK_TIMEOUT_MS)
+        {
+          Debug_Print("[lwip] no IP for too long, forcing ETH reset\r\n");
+          ethernetif_reset(&gnetif);
+          ip_missing_since = 0;
+        }
+      }
     }
 
     /* Periodic heartbeat so UART output is visible even if the terminal was
