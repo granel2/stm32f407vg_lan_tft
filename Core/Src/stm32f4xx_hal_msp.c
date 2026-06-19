@@ -245,8 +245,17 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+    /* Hold nRST low for 2 s, not the datasheet-minimum ~10ms. The earlier 5s
+       hold was a leftover from a now-disproven theory (PROJECT_GUIDE.md:
+       "stuck REFCLKO/PLL block needing a long discharge") - the actual
+       root cause of the "DMABMR.SWR timeout / no RMII REF_CLK" failures was
+       a too-weak pulldown on the LED2/nINTSEL strap (pin 2) losing the race
+       against the PHY's internal pull-up at nRST release, fixed in hardware
+       by swapping that resistor to 1k. 2 s is kept only as a generous,
+       cheap margin over the datasheet minimum - not because a long hold is
+       load-bearing. */
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_Delay(10);
+    HAL_Delay(2000);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
     /* LAN8720 crystal oscillator needs ~10-20ms to stabilize after nRST.
        Without a stable 50 MHz CLK_OUT on PA1 the ETH DMA SW reset
@@ -333,25 +342,20 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
           HAL_Delay(50);
         }
 
-        /* PHY software reset (BCR bit 15): restarts crystal osc + PLL.
-           Without this the LAN8720 may not be outputting 50 MHz CLKOUT. */
-        MDIO_WR(found_addr, 0, 0x8000U);
-        {
-          uint32_t rst_t = HAL_GetTick();
-          uint32_t bcr2;
-          do { MDIO_RD(found_addr, 0, bcr2); }
-          while ((bcr2 & 0x8000U) && ((HAL_GetTick() - rst_t) < 1000U));
-
-          snprintf(probe_buf, sizeof(probe_buf),
-                   "[msp] PHY soft-reset %s BCR=%04X\r\n",
-                   (bcr2 & 0x8000U) ? "TIMEOUT" : "OK",
-                   (unsigned)bcr2);
-          HAL_UART_Transmit(&huart1, (uint8_t *)probe_buf,
-                            (uint16_t)strlen(probe_buf), 100);
-        }
-        /* Allow crystal / PLL to lock and CLKOUT to stabilise.
-           LAN8720 crystal startup can take up to ~300ms; 500ms is safe. */
-        HAL_Delay(500);
+        /* PHY software reset (BCR bit 15) via MDIO - REMOVED 2026-06-19.
+           Confirmed on real hardware that this extra step was the problem,
+           not a fix: even after lengthening the hardware nRST pulse above
+           to 5s (which alone, done manually with tweezers, reliably
+           recovered a stuck REFCLKO block - see PROJECT_GUIDE.md), 9/9
+           subsequent attempts STILL failed with "no RMII REF_CLK" as long
+           as this MDIO soft-reset ran right after. Hypothesis: this
+           register-triggered "restart crystal osc + PLL" can itself fail
+           to relock, re-breaking the exact thing the long nRST pulse had
+           just fixed. The manual tweezers test that proved 5s works never
+           involved this MDIO step at all - only the hardware nRST. Left
+           the diagnostic register dump above (read-only) since it's
+           harmless and useful; only the actual reset WRITE + its wait +
+           settle delay are removed. */
       }
 
 #undef MDIO_RD

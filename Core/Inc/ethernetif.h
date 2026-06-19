@@ -44,4 +44,24 @@ extern volatile uint32_t g_eth_debug_marker;
    until some pbuf is freed). See PROJECT_GUIDE.md. */
 extern uint8_t g_eth_rx_alloc_status;
 
+/* TEMPORARY diagnostic: raw return value of the last LAN8742_GetLinkState()
+   call made inside ethernetif_poll_link() (see lan8742.h for the
+   LAN8742_STATUS_* codes - e.g. 1 = LINK_DOWN, 2..5 = various up states,
+   negative = MDIO read/write error). Lets the heartbeat show what the PHY
+   chip itself is actually reporting, independent of netif_is_link_up(),
+   to tell apart "PHY says link is up the whole time" (hardware/signal
+   issue) from "PHY correctly reports down but netif logic doesn't act on
+   it" (firmware bug). See PROJECT_GUIDE.md. */
+extern int32_t g_eth_last_phy_link_state;
+
+/* Dedicated INIT_FAIL flag, set by low_level_init() (ethernetif.c) on a
+   HAL_ETH_Init() failure and cleared on success. Use this instead of
+   g_eth_debug_marker==100 to detect an init failure from main.c:
+   g_eth_debug_marker gets unconditionally overwritten by MX_LWIP_Init()
+   right after the very first low_level_init() call (via netif_add()), so
+   it is NOT safe for that purpose - confirmed on real hardware that the
+   fast-escalation logic never fired because of exactly this. See
+   PROJECT_GUIDE.md. */
+extern uint8_t g_eth_hw_failed;
+
 #endif /* __ETHERNETIF_H__ */

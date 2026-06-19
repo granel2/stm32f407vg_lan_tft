@@ -92,7 +92,26 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  /* Hold the LAN8720 in reset (PB10/nRST) as early as firmware can run, before
+     R3's 10k pull-up can release it on its own while VDD/clocks are still
+     ramping up. Previously nRST wasn't touched by firmware until deep inside
+     HAL_ETH_MspInit() (called from MX_LWIP_Init() below), well after
+     SystemClock_Config() and other peripheral inits - confirmed on real
+     hardware (PROJECT_GUIDE.md) that manually grounding nRST starting from
+     power-up (instead of relying on R3 + this late firmware assert) was
+     needed to reliably get the LAN8720's REFCLKO block to start. Asserting
+     nRST here, before anything else, removes most of that gap; the actual
+     5 s hold + release still happens later in HAL_ETH_MspInit(). */
+  {
+    GPIO_InitTypeDef nrst_early = {0};
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    nrst_early.Pin = GPIO_PIN_10;
+    nrst_early.Mode = GPIO_MODE_OUTPUT_PP;
+    nrst_early.Pull = GPIO_NOPULL;
+    nrst_early.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &nrst_early);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+  }
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -107,6 +126,16 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* Print the firmware build date/time on every boot (cold-boot or
+     NVIC_SystemReset() escalation alike) so a pasted log can always be
+     matched to the exact binary that produced it - __DATE__/__TIME__ are
+     baked in by the compiler at build time, so this can't go stale the way
+     a manually-maintained version number could. */
+  {
+    char boot_msg[64];
+    snprintf(boot_msg, sizeof(boot_msg), "\r\n[boot] firmware built %s %s\r\n", __DATE__, __TIME__);
+    Debug_Print(boot_msg);
+  }
   MX_LWIP_Init();
   tcp_echo_client_init();
   /* USER CODE END 2 */
@@ -148,21 +177,70 @@ int main(void)
          hardware: IP missing for an entire hour with no recovery (see
          PROJECT_GUIDE.md). DHCP on a healthy LAN completes in well under a
          second, so anything stuck this long needs the same hardware-level
-         kick used for wedged TCP. */
-      #define DHCP_STUCK_TIMEOUT_MS 90000U
+         kick used for wedged TCP. Lowered from 90s: that long a wait only
+         delayed the inevitable - logs show ethernetif_reset() alone often
+         doesn't get DHCP working again even though link/hardware recover
+         fine, while a full MCU reboot reliably does within ~5s (see
+         PROJECT_GUIDE.md) - so waiting it out in place wastes minutes for
+         nothing. Shorter timeout = fewer wasted seconds before falling
+         through to the escalation reboot below. */
+      #define DHCP_STUCK_TIMEOUT_MS 15000U
+      /* When ETH hardware itself is known broken (g_eth_hw_failed, set by
+         low_level_init() on a HAL_ETH_Init() failure and cleared on success
+         - see ethernetif.c/.h), there is nothing to "wait out":
+         eth_check_refclk_pa1() already gave a definitive answer in seconds.
+         Retry almost immediately instead of waiting the full
+         DHCP_STUCK_TIMEOUT_MS (that long timeout exists for a genuinely
+         different case - ETH hardware fine, DHCP server just
+         slow/unresponsive).
+         NOTE: g_eth_debug_marker==100 was used here originally, but that is
+         WRONG - MX_LWIP_Init() unconditionally overwrites
+         g_eth_debug_marker right after the very first low_level_init()
+         call (via netif_add()), clobbering the 100 a cold-boot failure had
+         just set, so that condition never actually fired on real hardware
+         (confirmed: heartbeat kept showing LINK_DOWN instead of INIT_FAIL,
+         and the fast retry never kicked in - the 90s DHCP_STUCK_TIMEOUT_MS
+         ran every time instead). g_eth_hw_failed is written nowhere else,
+         so it can't be clobbered the same way. See PROJECT_GUIDE.md. */
+      #define ETH_INIT_FAIL_RETRY_MS 2000U
+      /* Escalation: ethernetif_reset() alone (nRST pulse + MDIO, board
+         power left on) sometimes cannot get DHCP working again even once
+         the hardware/link itself recover fine - confirmed on real hardware
+         that only a full MCU reboot (through main(), where nRST is now
+         asserted as the very first thing - see above) reliably recovers it
+         in that case. If the watchdog has had to force a reset this many
+         times in a row with no successful IP in between, stop retrying in
+         place and reboot the whole MCU instead, so the next boot gets the
+         benefit of that early nRST assert - same effect as the manual
+         "ground nRST during a restart" fix, with no human needed. Lowered
+         from 3 to 2: logs show soft resets don't reliably fix this specific
+         failure mode anyway, so a 3rd in-place retry is just wasted time
+         that a reboot already proven to work could have used instead. See
+         PROJECT_GUIDE.md. */
+      #define ETH_RESET_ESCALATE_AFTER 2U
       {
         static uint32_t ip_missing_since = 0;
+        static uint32_t reset_escalation_count = 0;
 
         if (has_ip)
         {
           ip_missing_since = 0;
+          reset_escalation_count = 0;
         }
         else if (ip_missing_since == 0)
         {
           ip_missing_since = HAL_GetTick();
         }
-        else if ((HAL_GetTick() - ip_missing_since) >= DHCP_STUCK_TIMEOUT_MS)
+        else if ((HAL_GetTick() - ip_missing_since) >=
+                 (g_eth_hw_failed ? ETH_INIT_FAIL_RETRY_MS : DHCP_STUCK_TIMEOUT_MS))
         {
+          reset_escalation_count++;
+          if (reset_escalation_count >= ETH_RESET_ESCALATE_AFTER)
+          {
+            Debug_Print("[lwip] ETH reset escalation exhausted, rebooting MCU\r\n");
+            HAL_Delay(50); /* let the UART finish transmitting before reset */
+            NVIC_SystemReset();
+          }
           Debug_Print("[lwip] no IP for too long, forcing ETH reset\r\n");
           ethernetif_reset(&gnetif);
           ip_missing_since = 0;
@@ -178,10 +256,11 @@ int main(void)
       {
         char hb[160];
         last_hb = HAL_GetTick();
-        snprintf(hb, sizeof(hb), "[alive] t=%ums eth=%s txbuf=%lu rxalloc=%u tcp=%c heap=%u/%u sndq=%u\r\n",
+        snprintf(hb, sizeof(hb), "[alive] t=%ums eth=%s phy=%d txbuf=%lu rxalloc=%u tcp=%c heap=%u/%u sndq=%u\r\n",
                  (unsigned)HAL_GetTick(),
-                 (g_eth_debug_marker == 100U) ? "INIT_FAIL" :
+                 g_eth_hw_failed            ? "INIT_FAIL" :
                  netif_is_link_up(&gnetif)    ? "LINK_UP"   : "LINK_DOWN",
+                 (int)g_eth_last_phy_link_state,
                  (unsigned long)EthHandle.TxDescList.BuffersInUse,
                  (unsigned)g_eth_rx_alloc_status,
                  tcp_echo_client_state_char(),

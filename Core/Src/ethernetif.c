@@ -20,6 +20,7 @@
 #include "lwip/snmp.h"
 #include "ethernetif.h"
 #include "lan8742.h"
+#include <stdio.h>
 #include <string.h>
 
 extern UART_HandleTypeDef huart1;
@@ -33,6 +34,28 @@ static void eth_debug(const char *s)
 #define IFNAME1 't'
 
 #define ETH_DMA_TRANSMIT_TIMEOUT       (20U)
+
+/* LAN8720's internal REFCLKO-generation block (PLL/buffer downstream of the
+   crystal - confirmed by scope that the crystal itself keeps oscillating
+   fine) occasionally stops outputting 50 MHz on pin14/PA1, so
+   HAL_ETH_Init() fails with "DMABMR.SWR timeout - no RMII REF_CLK" -
+   confirmed by software edge-counting on PA1 (see eth_check_refclk_pa1())
+   that the clock is genuinely absent, not just a STM32-side fluke.
+   ROOT CAUSE FOUND (PROJECT_GUIDE.md): the actual fix was a too-weak
+   pulldown on the LED2/nINTSEL strap pin racing the PHY's internal pull-up
+   at nRST release, fixed in hardware (resistor swapped to 1k) - NOT a long
+   nRST pulse, which was an earlier, disproven theory. With the strap fixed,
+   a single HAL_ETH_Init() attempt should normally succeed, so this retry
+   loop is kept only as a cheap safety net against rare transient glitches -
+   small count, short gap between attempts. */
+#define ETH_INIT_RETRY_COUNT           (1U)
+#define ETH_INIT_RETRY_DELAY_MS        (200U)
+
+/* If low_level_init() exhausts ETH_INIT_RETRY_COUNT and still fails this
+   many times in a row, reboot the MCU immediately instead of waiting for
+   the slower, generic "no IP" watchdog in main.c to notice - see
+   PROJECT_GUIDE.md. */
+#define ETH_INIT_FAIL_REBOOT_THRESHOLD (2U)
 
 /* This app buffers receive packets of its primary service protocol for
    processing later. */
@@ -63,6 +86,17 @@ static ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Desc
 LWIP_MEMPOOL_DECLARE(RX_POOL, ETH_RX_BUFFER_CNT, sizeof(RxBuff_t), "Zero-copy RX PBUF pool");
 
 uint8_t g_eth_rx_alloc_status;
+int32_t g_eth_last_phy_link_state = LAN8742_STATUS_READ_ERROR;
+
+/* Dedicated INIT_FAIL flag - g_eth_debug_marker alone isn't safe for this:
+   MX_LWIP_Init() (main.c) unconditionally overwrites g_eth_debug_marker
+   right after the very first low_level_init() call (via netif_add()), so a
+   marker==100 set by a cold-boot HAL_ETH_Init() failure was getting wiped
+   before the heartbeat/watchdog in main.c ever got a chance to see it -
+   confirmed on real hardware (PROJECT_GUIDE.md): the fast escalation never
+   fired because of exactly this. This flag is only ever written here, in
+   low_level_init(), so nothing else can clobber it. */
+uint8_t g_eth_hw_failed = 0U;
 
 /* Set by HAL_ETH_RxCpltCallback()/HAL_ETH_ErrorCallback() (ISR context),
    cleared by ethernetif_input() once it has drained the queue. Avoids
@@ -79,6 +113,135 @@ volatile uint32_t g_eth_debug_marker = 0;
 ETH_HandleTypeDef EthHandle;
 static ETH_TxPacketConfig TxConfig;
 lan8742_Object_t LAN8742;
+
+/* Diagnostic: is the LAN8720 actually driving RMII_REF_CLK on PA1?
+   Temporarily steals PA1 into TIM2_CH2 (AF1) "External Clock Mode 1" so
+   TIM2 counts every rising edge it sees for ~1ms, then restores PA1 to its
+   normal ETH AF11 function (HAL_ETH_MspInit() would redo this anyway on
+   the next attempt, but restore now in case none follows). A healthy
+   50 MHz REFCLKO should give a count in the tens of thousands; a dead/
+   absent clock gives ~0. Only call this when ETH is already known broken
+   (e.g. right after HAL_ETH_Init() fails) - it has nothing to do with
+   normal operation. See PROJECT_GUIDE.md. */
+static uint32_t eth_check_refclk_pa1(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  uint32_t count;
+
+  __HAL_RCC_TIM2_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  TIM2->CR1 = 0U;
+  TIM2->CCMR1 = TIM_CCMR1_CC2S_0;                  /* CC2 channel as input, IC2 = TI2, no filter */
+  TIM2->SMCR = TIM_SMCR_TS_2 | TIM_SMCR_TS_1 |      /* TS = 110 = TI2FP2 */
+               TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1 | TIM_SMCR_SMS_0; /* SMS = 111 = External Clock Mode 1 */
+  TIM2->CNT = 0U;
+  TIM2->CR1 |= TIM_CR1_CEN;
+
+  HAL_Delay(1);
+
+  count = TIM2->CNT;
+
+  TIM2->CR1 = 0U;
+  __HAL_RCC_TIM2_CLK_DISABLE();
+
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  return count;
+}
+
+/* Attempts to recover a stuck LAN8720 REFCLKO/PLL block via MDIO, as an
+   alternative to a real power-cycle. Per the SMSC LAN8720/LAN8720i datasheet
+   (Rev 1.0, Section 5.3.5.1 "General Power-Down" and the architecture block
+   diagram in Figure 1.2): General Power-Down (BCR/register-0 bit 11) powers
+   down "the entire transceiver, except the management interface" and, on
+   wake, "the transceiver powers up and is automatically reset" - this is a
+   different code path from the plain software-reset bit (BCR bit 15,
+   already tried and confirmed NOT to fix this exact symptom - see
+   PROJECT_GUIDE.md), and the datasheet's own block diagram shows the
+   PLL/oscillator block as a separate block from "Reset Control" with no
+   drawn connection between them, consistent with nRST/soft-reset never
+   reaching it while General Power-Down might (it is documented to drop
+   power to the analog core, not just reset digital state).
+   This is raw MDIO (MACMIIAR/MACMIIDR), same technique as the diagnostic
+   dump in HAL_ETH_MspInit() (stm32f4xx_hal_msp.c) - works independently of
+   HAL_ETH_Init()/DMABMR state, only needs ETH_CLK + MDIO/MDC GPIO already
+   configured (true here: HAL_ETH_MspInit() ran as part of every HAL_ETH_Init()
+   attempt above, regardless of whether it ultimately timed out).
+   Returns 1 if REFCLK came back (PA1 edges > 0 afterwards), 0 otherwise. */
+static uint32_t eth_try_phy_power_cycle(void)
+{
+  volatile uint32_t *macmiiar = (volatile uint32_t *)0x40028010UL;
+  volatile uint32_t *macmiidr = (volatile uint32_t *)0x40028014UL;
+  uint32_t t;
+  uint32_t addr;
+  uint32_t found_addr = 0xFFUL;
+
+#define PHY_MDIO_RD(a, r, v) do {                                         \
+  *macmiiar = ((uint32_t)(a) << 11) | ((uint32_t)(r) << 6) | 0x14UL | 0x01UL; \
+  t = HAL_GetTick();                                                      \
+  while ((*macmiiar & 0x01U) && ((HAL_GetTick() - t) < 100U));            \
+  (v) = (*macmiiar & 0x01U) ? 0xFFFFUL : (*macmiidr & 0xFFFFUL);          \
+} while (0)
+
+#define PHY_MDIO_WR(a, r, v) do {                                         \
+  *macmiidr = (v);                                                        \
+  *macmiiar = ((uint32_t)(a) << 11) | ((uint32_t)(r) << 6) | 0x14UL | 0x03UL; \
+  t = HAL_GetTick();                                                      \
+  while ((*macmiiar & 0x01U) && ((HAL_GetTick() - t) < 100U));            \
+} while (0)
+
+  for (addr = 0U; addr < 32U; addr++)
+  {
+    uint32_t id1;
+    PHY_MDIO_RD(addr, 2, id1);
+    if (id1 != 0xFFFFUL) { found_addr = addr; break; }
+  }
+
+  if (found_addr != 0xFFUL)
+  {
+    eth_debug("[eth] phy power-cycle: trying General Power-Down (BCR.11) toggle\r\n");
+    PHY_MDIO_WR(found_addr, 0, 0x0800U); /* BCR: power down, clear all other bits */
+    /* Confirmed on real hardware (PROJECT_GUIDE.md) that this toggle - at
+       both 100 ms and 5 s hold - never actually recovers REFCLK (the real
+       fault was a strap mis-latch, not anything an MDIO-side PHY register
+       write can reach). Kept only as a cheap, near-free fallback attempt,
+       so the hold is short - no point burning seconds on something with no
+       evidence it ever helps. */
+    HAL_Delay(200U);
+    PHY_MDIO_WR(found_addr, 0, 0x0000U); /* BCR: clear power down - datasheet: "powers up and is automatically reset" */
+    HAL_Delay(100U); /* let the crystal/PLL restart - same margin used for nRST release elsewhere */
+  }
+  else
+  {
+    eth_debug("[eth] phy power-cycle: no PHY responds on MDIO, skipping\r\n");
+  }
+
+#undef PHY_MDIO_RD
+#undef PHY_MDIO_WR
+
+  if (found_addr == 0xFFUL)
+  {
+    return 0U;
+  }
+
+  {
+    uint32_t edges = eth_check_refclk_pa1();
+    char msg[64];
+    snprintf(msg, sizeof(msg),
+             "[eth] phy power-cycle: PA1 edge count after toggle: %lu\r\n",
+             (unsigned long)edges);
+    eth_debug(msg);
+    return (edges > 0U) ? 1U : 0U;
+  }
+}
 
 static int32_t ETH_PHY_IO_Init(void);
 static int32_t ETH_PHY_IO_DeInit(void);
@@ -111,17 +274,92 @@ static void low_level_init(struct netif *netif)
   EthHandle.Init.RxBuffLen = ETH_RX_BUF_SIZE;
 
   g_eth_debug_marker = 1;
-  /* configure ethernet peripheral (GPIOs/clocks done in HAL_ETH_MspInit, MAC+DMA here) */
-  if (HAL_ETH_Init(&EthHandle) != HAL_OK)
+  /* configure ethernet peripheral (GPIOs/clocks done in HAL_ETH_MspInit, MAC+DMA here).
+     Retry on failure - see ETH_INIT_RETRY_COUNT comment above. */
   {
-    g_eth_debug_marker = 100;
-    /* DMABMR.SWR never cleared — RMII 50 MHz REF_CLK from LAN8720 absent.
-       EthHandle.gState stays ERROR so ethernetif_poll_link skips PHY access. */
-    eth_debug("[eth] HAL_ETH_Init FAILED (DMABMR.SWR timeout - no RMII REF_CLK?)\r\n");
-    netif_set_link_down(netif);
-    netif_set_down(netif);
-    return;
+    uint32_t init_try;
+    HAL_StatusTypeDef init_status = HAL_ERROR;
+    static uint32_t s_init_fail_streak = 0;
+
+    for (init_try = 0U; init_try < ETH_INIT_RETRY_COUNT; init_try++)
+    {
+      if (init_try > 0U)
+      {
+        char retry_msg[48];
+        snprintf(retry_msg, sizeof(retry_msg),
+                 "[eth] HAL_ETH_Init retry %lu/%lu\r\n",
+                 (unsigned long)(init_try + 1U), (unsigned long)ETH_INIT_RETRY_COUNT);
+        eth_debug(retry_msg);
+        /* Deliberate pause before the next nRST attempt - see
+           ETH_INIT_RETRY_DELAY_MS comment above. */
+        HAL_Delay(ETH_INIT_RETRY_DELAY_MS);
+        HAL_ETH_DeInit(&EthHandle);
+      }
+
+      init_status = HAL_ETH_Init(&EthHandle);
+      if (init_status == HAL_OK)
+      {
+        break;
+      }
+    }
+
+    if (init_status != HAL_OK)
+    {
+      uint32_t refclk_edges = eth_check_refclk_pa1();
+      char refclk_msg[64];
+
+      g_eth_debug_marker = 100;
+      g_eth_hw_failed = 1U;
+      /* DMABMR.SWR never cleared — RMII 50 MHz REF_CLK from LAN8720 absent.
+         EthHandle.gState stays ERROR so ethernetif_poll_link skips PHY access. */
+      eth_debug("[eth] HAL_ETH_Init FAILED after retries (DMABMR.SWR timeout - no RMII REF_CLK?)\r\n");
+      snprintf(refclk_msg, sizeof(refclk_msg),
+               "[eth] PA1 edge count in ~1ms: %lu (>>0 = REFCLK present)\r\n",
+               (unsigned long)refclk_edges);
+      eth_debug(refclk_msg);
+
+      /* Before escalating to a full MCU reboot (which only works because
+         nRST happens to be asserted early in main() - see main.c - not
+         because it actually fixes the PHY by itself): try a software-only
+         PHY power-cycle via MDIO (General Power-Down, BCR bit 11) - see
+         eth_try_phy_power_cycle() above for why this is a genuinely
+         different mechanism from the nRST/soft-reset paths already proven
+         insufficient on real hardware. If it brings REFCLK back, retry
+         HAL_ETH_Init() once more right away instead of escalating. */
+      if (refclk_edges == 0U && eth_try_phy_power_cycle())
+      {
+        eth_debug("[eth] phy power-cycle: REFCLK recovered, retrying HAL_ETH_Init\r\n");
+        HAL_ETH_DeInit(&EthHandle);
+        init_status = HAL_ETH_Init(&EthHandle);
+      }
+
+      if (init_status != HAL_OK)
+      {
+        /* Don't wait out the slow 90s "no IP" watchdog in main.c to find out
+           this failed - eth_check_refclk_pa1() already gave a definitive,
+           immediate answer (0 edges = REFCLK genuinely absent), so further
+           delay before reacting only wastes time. A real MCU reboot (through
+           main(), where nRST is now asserted before anything else - see
+           main.c) is the only thing observed to reliably recover this on
+           real hardware; escalate fast instead of retrying in place forever.
+           See PROJECT_GUIDE.md. */
+        s_init_fail_streak++;
+        if (s_init_fail_streak >= ETH_INIT_FAIL_REBOOT_THRESHOLD)
+        {
+          eth_debug("[eth] too many consecutive HAL_ETH_Init failures, rebooting MCU\r\n");
+          HAL_Delay(50); /* let the UART finish transmitting before reset */
+          NVIC_SystemReset();
+        }
+
+        netif_set_link_down(netif);
+        netif_set_down(netif);
+        return;
+      }
+    }
+
+    s_init_fail_streak = 0;
   }
+  g_eth_hw_failed = 0U;
   g_eth_debug_marker = 2;
   eth_debug("[eth] HAL_ETH_Init OK\r\n");
 
@@ -637,6 +875,7 @@ void ethernetif_poll_link(struct netif *netif)
   last_check = HAL_GetTick();
 
   PHYLinkState = LAN8742_GetLinkState(&LAN8742);
+  g_eth_last_phy_link_state = PHYLinkState;
 
   if (netif_is_link_up(netif) && (PHYLinkState <= LAN8742_STATUS_LINK_DOWN))
   {
