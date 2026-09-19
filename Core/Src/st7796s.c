@@ -288,3 +288,43 @@ void ST7796S_DrawTestPattern(void)
   ST7796S_FillRect(0U, 0U, 4U, h, ST7796S_WHITE);
   ST7796S_FillRect((uint16_t)(w - 4U), 0U, 4U, h, ST7796S_WHITE);
 }
+
+void ST7796S_DrawDigit7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                        uint8_t digit, uint16_t color, uint16_t bg)
+{
+  /* Segment bits: a=top, b=top-right, c=bottom-right, d=bottom,
+     e=bottom-left, f=top-left, g=middle */
+  static const uint8_t seg[10] =
+  {
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F,
+  };
+  const uint16_t t  = (uint16_t)((w / 5U) == 0U ? 1U : (w / 5U)); /* stroke */
+  const uint16_t hv = (uint16_t)((h - 3U * t) / 2U);               /* vertical segment length */
+  const uint8_t  m  = (digit < 10U) ? seg[digit] : 0U;             /* >9 = blank */
+
+  ST7796S_FillRect(x, y, w, h, bg);
+  if (m & 0x01U) { ST7796S_FillRect((uint16_t)(x + t), y, (uint16_t)(w - 2U * t), t, color); }                                   /* a */
+  if (m & 0x02U) { ST7796S_FillRect((uint16_t)(x + w - t), (uint16_t)(y + t), t, hv, color); }                                   /* b */
+  if (m & 0x04U) { ST7796S_FillRect((uint16_t)(x + w - t), (uint16_t)(y + 2U * t + hv), t, hv, color); }                         /* c */
+  if (m & 0x08U) { ST7796S_FillRect((uint16_t)(x + t), (uint16_t)(y + h - t), (uint16_t)(w - 2U * t), t, color); }               /* d */
+  if (m & 0x10U) { ST7796S_FillRect(x, (uint16_t)(y + 2U * t + hv), t, hv, color); }                                             /* e */
+  if (m & 0x20U) { ST7796S_FillRect(x, (uint16_t)(y + t), t, hv, color); }                                                       /* f */
+  if (m & 0x40U) { ST7796S_FillRect((uint16_t)(x + t), (uint16_t)(y + t + hv), (uint16_t)(w - 2U * t), t, color); }             /* g */
+}
+
+void ST7796S_DrawNumber7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                         uint32_t value, uint8_t digits, uint16_t color, uint16_t bg)
+{
+  const uint16_t pitch = (uint16_t)(w + w / 4U);
+
+  for (uint8_t i = 0; i < digits; i++)
+  {
+    uint16_t cx = (uint16_t)(x + (digits - 1U - i) * pitch);
+    uint8_t  d  = (uint8_t)(value % 10U);
+
+    /* blank leading zeros, but always show the units digit */
+    if ((value == 0U) && (i > 0U)) { d = 0xFFU; }
+    ST7796S_DrawDigit7(cx, y, w, h, d, color, bg);
+    value /= 10U;
+  }
+}

@@ -61,6 +61,14 @@ void     ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16
    Wrong colours / mirrored layout tell which MADCTL bits the panel needs. */
 void     ST7796S_DrawTestPattern(void);
 
+/* 7-segment style digits drawn from rectangles - lets the bring-up show
+   numbers (uptime, timings) before any real font exists. Cell is w x h px. */
+void     ST7796S_DrawDigit7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                            uint8_t digit, uint16_t color, uint16_t bg);
+/* Right-aligned unsigned number, `digits` cells wide, leading zeros blanked */
+void     ST7796S_DrawNumber7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                             uint32_t value, uint8_t digits, uint16_t color, uint16_t bg);
+
 #ifdef __cplusplus
 }
 #endif

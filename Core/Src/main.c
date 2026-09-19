@@ -70,6 +70,7 @@ static void Test_Blink_LEDs(void);
 static void MX_LWIP_Init(void);
 static void MX_SPI3_Init(void);
 static void TFT_SmokeTest(void);
+static void TFT_AlivePoll(void);
 static void netif_status_callback(struct netif *netif);
 static void Debug_Print(const char *msg);
 /* USER CODE END PFP */
@@ -153,6 +154,7 @@ int main(void)
   while (1)
   {
     Test_Blink_LEDs();
+    TFT_AlivePoll();
 
     /* Drain all pending ETH RX frames. Called unconditionally: the internal
        do-while exits immediately when nothing is pending, so the cost is one
@@ -590,31 +592,102 @@ static void MX_SPI3_Init(void)
   }
 }
 
+/* Layout of the bring-up screen (portrait, 320x480). The test pattern's
+   bottom-right quarter is a plain grey block - the live counters go there. */
+#define TFT_CNT_X       166U   /* left edge of the 5-digit counters */
+#define TFT_CNT_DIGIT_W  24U
+#define TFT_CNT_DIGIT_H  40U
+#define TFT_UPTIME_Y    300U   /* seconds since boot */
+#define TFT_FRAME_MS_Y  360U   /* measured full-screen fill time, ms */
+#define TFT_BLINK_X     170U   /* 40x40 square toggling every second (= pattern's red square) */
+#define TFT_BLINK_Y     250U
+#define TFT_GREY        ST7796S_RGB(64, 64, 64)
+
+static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/screen */
+
 /**
-  * @brief  One-shot TFT hardware check at boot: init, read the controller ID
-  *         to the debug UART, flash R/G/B full-screen, leave a test pattern.
-  *         Everything here is blocking (~1.5 s) - runs before lwIP on purpose.
+  * @brief  One-shot TFT hardware check at boot. Everything here is blocking
+  *         (~7 s) - runs before lwIP on purpose. What to look for:
+  *         UART : "[tft] id ..." verdict, full-frame fill time in ms
+  *         panel: solid red -> green -> blue -> white (0.4 s each), then the
+  *                test pattern rotated through all 4 orientations (0.8 s
+  *                each), finally portrait with two counters bottom-right.
   */
 static void TFT_SmokeTest(void)
 {
+  static const uint16_t fills[4] = { ST7796S_RED, ST7796S_GREEN, ST7796S_BLUE, ST7796S_WHITE };
   uint8_t id[4];
-  char msg[96];
+  uint32_t t0, id24;
+  char msg[128];
 
   ST7796S_Init(&hspi3);
 
+  /* 1. Link check via RDID4. Needs SDA-O -> PC11; without it the bus reads
+     back all-0 or all-1, which is reported as such rather than as a fault.
+     A 1-bit left shift of the reply is normal for 4-wire SPI reads. */
   ST7796S_ReadID(id);
-  snprintf(msg, sizeof(msg), "[tft] RDID4(0xD3) = %02X %02X %02X %02X (ST7796S expects xx 00 77 96)\r\n",
-           id[0], id[1], id[2], id[3]);
+  id24 = ((uint32_t)id[1] << 16) | ((uint32_t)id[2] << 8) | id[3];
+  snprintf(msg, sizeof(msg), "[tft] RDID4(0xD3) = %02X %02X %02X %02X -> %s\r\n",
+           id[0], id[1], id[2], id[3],
+           ((id[0] & id[1] & id[2] & id[3]) == 0xFFU) ? "bus idle high: SDA-O not wired or no power" :
+           ((id[0] | id[1] | id[2] | id[3]) == 0x00U) ? "all zero: SDA-O not wired or panel not answering" :
+           (id24 == 0x007796U)                       ? "ST7796S confirmed" :
+           (((id24 >> 1) & 0xFFFFFFU) == 0x007796U)  ? "ST7796S confirmed (1-bit shifted reply)" :
+                                                       "unexpected ID - other controller or bad wiring");
   Debug_Print(msg);
 
-  ST7796S_FillScreen(ST7796S_RED);
-  HAL_Delay(300);
-  ST7796S_FillScreen(ST7796S_GREEN);
-  HAL_Delay(300);
-  ST7796S_FillScreen(ST7796S_BLUE);
-  HAL_Delay(300);
+  /* 2. Colour check + throughput: time one full-screen fill (307 200 B).
+     Expect ~250 ms at 10 MHz SCK, ~125 ms at 20 MHz. */
+  for (uint8_t i = 0; i < 4U; i++)
+  {
+    t0 = HAL_GetTick();
+    ST7796S_FillScreen(fills[i]);
+    tft_frame_ms = HAL_GetTick() - t0;
+    HAL_Delay(400);
+  }
+  snprintf(msg, sizeof(msg), "[tft] full-screen fill = %lu ms (%lu kB/s)\r\n",
+           (unsigned long)tft_frame_ms,
+           (unsigned long)((tft_frame_ms > 0U) ? (300U * 1000U / tft_frame_ms) : 0U));
+  Debug_Print(msg);
+
+  /* 3. MADCTL check: the pattern must appear upright in every orientation,
+     white border on all four edges, red bar 6th from the left. */
+  for (uint8_t r = 0; r < 4U; r++)
+  {
+    ST7796S_SetRotation(r);
+    ST7796S_DrawTestPattern();
+    HAL_Delay(800);
+  }
+
+  /* 4. Final screen: portrait test pattern + live counters (TFT_AlivePoll) */
+  ST7796S_SetRotation(0U);
   ST7796S_DrawTestPattern();
-  Debug_Print("[tft] test pattern drawn\r\n");
+  ST7796S_DrawNumber7(TFT_CNT_X, TFT_FRAME_MS_Y, TFT_CNT_DIGIT_W, TFT_CNT_DIGIT_H,
+                      tft_frame_ms, 5U, ST7796S_CYAN, TFT_GREY);
+  Debug_Print("[tft] smoke test done, live counters running\r\n");
+}
+
+/**
+  * @brief  Proof the link stays alive after boot: once a second redraw the
+  *         uptime (seconds, cyan digits) and toggle a red/green square in the
+  *         grey block. ~2.5 kB per update = ~2 ms at 10 MHz, so it never
+  *         stalls the Ethernet main loop. Call every main-loop iteration.
+  */
+static void TFT_AlivePoll(void)
+{
+  static uint32_t next_tick = 0;
+  static uint8_t  phase = 0;
+
+  if ((int32_t)(HAL_GetTick() - next_tick) < 0)
+  {
+    return;
+  }
+  next_tick = HAL_GetTick() + 1000U;
+  phase ^= 1U;
+
+  ST7796S_FillRect(TFT_BLINK_X, TFT_BLINK_Y, 40U, 40U, phase ? ST7796S_GREEN : ST7796S_RED);
+  ST7796S_DrawNumber7(TFT_CNT_X, TFT_UPTIME_Y, TFT_CNT_DIGIT_W, TFT_CNT_DIGIT_H,
+                      HAL_GetTick() / 1000U, 5U, ST7796S_CYAN, TFT_GREY);
 }
 
 /* USER CODE END 4 */
