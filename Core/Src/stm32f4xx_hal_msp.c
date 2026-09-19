@@ -192,7 +192,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
   * f407.sch - matches CubeMX's default ETH/RMII pin assignment exactly) and
   * issues a clean reset pulse to the PHY via its NRST line (PB10).
   *
-  * NOTE: ETH is not declared in stm32f407vg_lan_v1.ioc (it was wired up by
+  * NOTE: ETH is not declared in stm32f407vg_lan_tft.ioc (it was wired up by
   * hand, see PROJECT_GUIDE.md), so this lives inside the USER CODE block on
   * purpose - CubeMX code regeneration would otherwise not know to preserve it.
   * @param heth: ETH handle pointer
@@ -380,6 +380,39 @@ void HAL_ETH_MspDeInit(ETH_HandleTypeDef *heth)
     HAL_GPIO_DeInit(GPIOC, GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5);
 
     HAL_NVIC_DisableIRQ(ETH_IRQn);
+  }
+}
+
+/**
+  * @brief SPI3 MSP Initialization - TFT bus on the SV4 header
+  * PC10 -> SPI3_SCK, PC11 -> SPI3_MISO, PC12 -> SPI3_MOSI (AF6).
+  * NSS is software-driven (PA15 as plain GPIO, set up in MX_GPIO_Init).
+  * Not declared in the .ioc for the same reason as ETH above.
+  */
+void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  if (hspi->Instance == SPI3)
+  {
+    __HAL_RCC_SPI3_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    GPIO_InitStruct.Pin = GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  }
+}
+
+void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
+{
+  if (hspi->Instance == SPI3)
+  {
+    __HAL_RCC_SPI3_CLK_DISABLE();
+    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12);
   }
 }
 

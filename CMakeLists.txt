@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(stm32f407vg_lan_v1 C ASM)
+project(stm32f407vg_lan_tft C ASM)
 
 # Target MCU configuration
 set(MCU_FAMILY STM32F4)
@@ -68,11 +68,13 @@ set(PROJECT_SOURCES
   Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc.c
   Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc_ex.c
   Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_uart.c
+  Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c
   Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_eth.c
   Drivers/BSP/Components/lan8742/lan8742.c
   Core/Src/ethernetif.c
   Core/Src/sys_arch.c
   Core/Src/tcp_echo_client.c
+  Core/Src/st7796s.c
   Middlewares/Third_Party/LwIP/src/core/init.c
   Middlewares/Third_Party/LwIP/src/core/def.c
   Middlewares/Third_Party/LwIP/src/core/dns.c

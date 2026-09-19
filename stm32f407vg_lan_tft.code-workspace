@@ -1,0 +1,41 @@
+{
+  "folders": [
+    {
+      "name": "stm32f407vg_lan_tft",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.cache": true,
+      "**/.git": true
+    },
+    "search.exclude": {
+      "**/build": true,
+      "**/.cache": true,
+      "**/Drivers": true,
+      "**/Middlewares": true
+    },
+    "files.associations": {
+      "*.ioc": "properties",
+      "*.ld": "linkerscript",
+      "*.s": "arm",
+      "*.h": "c"
+    },
+    "files.encoding": "utf8",
+    "files.eol": "\n",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "[c]": {
+      "editor.defaultFormatter": "ms-vscode.cpptools"
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-vscode.cpptools",
+      "ms-vscode.cmake-tools",
+      "marus25.cortex-debug",
+      "stmicroelectronics.stm32cube-ide-build-cmake"
+    ]
+  }
+}

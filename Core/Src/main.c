@@ -32,6 +32,7 @@
 #include "tcp_echo_client.h"
 #include "stm32f4xx_hal_eth.h"
 #include "lwip/stats.h"
+#include "st7796s.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,6 +55,7 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
+SPI_HandleTypeDef hspi3;
 struct netif gnetif;
 extern ETH_HandleTypeDef EthHandle; /* defined in ethernetif.c */
 /* USER CODE END PV */
@@ -66,6 +68,8 @@ static void MX_USART3_UART_Init(void);
 static void Test_Blink_LEDs(void);
 /* USER CODE BEGIN PFP */
 static void MX_LWIP_Init(void);
+static void MX_SPI3_Init(void);
+static void TFT_SmokeTest(void);
 static void netif_status_callback(struct netif *netif);
 static void Debug_Print(const char *msg);
 /* USER CODE END PFP */
@@ -136,6 +140,10 @@ int main(void)
     snprintf(boot_msg, sizeof(boot_msg), "\r\n[boot] firmware built %s %s\r\n", __DATE__, __TIME__);
     Debug_Print(boot_msg);
   }
+  /* TFT bring-up runs before lwIP so its blocking HAL_Delay()s can't stall
+     Ethernet RX/DHCP; the panel just shows a static test pattern afterwards. */
+  MX_SPI3_Init();
+  TFT_SmokeTest();
   MX_LWIP_Init();
   tcp_echo_client_init();
   /* USER CODE END 2 */
@@ -436,7 +444,24 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* TFT control lines: CS idle high, RST held high (pulsed in ST7796S_Init),
+     DC don't-care, backlight off until the panel is initialised. PA15 is
+     JTDI after reset - SWD-only debugging is unaffected by repurposing it. */
+  HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, TFT_DC_Pin|TFT_BL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(TFT_RST_GPIO_Port, TFT_RST_Pin, GPIO_PIN_SET);
 
+  GPIO_InitStruct.Pin = TFT_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(TFT_CS_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = TFT_DC_Pin|TFT_RST_Pin|TFT_BL_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -536,6 +561,60 @@ static void netif_status_callback(struct netif *netif)
 static void Debug_Print(const char *msg)
 {
   HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)strlen(msg), 100);
+}
+
+/**
+  * @brief  SPI3 master for the ST7796S TFT. APB1 = 40 MHz, prescaler /4 ->
+  *         10 MHz SCK: comfortably inside the controller's write timing and
+  *         slow enough for RDID readback over the module's SDA-O line. Once
+  *         the panel is confirmed working, /2 (20 MHz) is worth trying for
+  *         faster full-screen fills. Software CS (PA15 GPIO), mode 0.
+  */
+static void MX_SPI3_Init(void)
+{
+  hspi3.Instance = SPI3;
+  hspi3.Init.Mode = SPI_MODE_MASTER;
+  hspi3.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi3.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi3.Init.NSS = SPI_NSS_SOFT;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi3.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief  One-shot TFT hardware check at boot: init, read the controller ID
+  *         to the debug UART, flash R/G/B full-screen, leave a test pattern.
+  *         Everything here is blocking (~1.5 s) - runs before lwIP on purpose.
+  */
+static void TFT_SmokeTest(void)
+{
+  uint8_t id[4];
+  char msg[96];
+
+  ST7796S_Init(&hspi3);
+
+  ST7796S_ReadID(id);
+  snprintf(msg, sizeof(msg), "[tft] RDID4(0xD3) = %02X %02X %02X %02X (ST7796S expects xx 00 77 96)\r\n",
+           id[0], id[1], id[2], id[3]);
+  Debug_Print(msg);
+
+  ST7796S_FillScreen(ST7796S_RED);
+  HAL_Delay(300);
+  ST7796S_FillScreen(ST7796S_GREEN);
+  HAL_Delay(300);
+  ST7796S_FillScreen(ST7796S_BLUE);
+  HAL_Delay(300);
+  ST7796S_DrawTestPattern();
+  Debug_Print("[tft] test pattern drawn\r\n");
 }
 
 /* USER CODE END 4 */

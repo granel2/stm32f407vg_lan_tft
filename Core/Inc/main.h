@@ -71,7 +71,16 @@ void Error_Handler(void);
 #define LED8_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+/* 3.5" ST7796S TFT on SPI3 (PC10 SCK / PC11 MISO / PC12 MOSI, header SV4).
+   CS/DC/RST/BL are plain GPIOs on the SV4/SV5/SV1 headers - see st7796s.h. */
+#define TFT_CS_Pin GPIO_PIN_15
+#define TFT_CS_GPIO_Port GPIOA
+#define TFT_DC_Pin GPIO_PIN_6
+#define TFT_DC_GPIO_Port GPIOB
+#define TFT_RST_Pin GPIO_PIN_7
+#define TFT_RST_GPIO_Port GPIOB
+#define TFT_BL_Pin GPIO_PIN_8
+#define TFT_BL_GPIO_Port GPIOB
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

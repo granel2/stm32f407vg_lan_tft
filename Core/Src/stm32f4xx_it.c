@@ -233,7 +233,7 @@ void SysTick_Handler(void)
 
 /**
   * @brief This function handles Ethernet global interrupt.
-  * NOTE: ETH is not declared in stm32f407vg_lan_v1.ioc (added by hand, see
+  * NOTE: ETH is not declared in stm32f407vg_lan_tft.ioc (added by hand, see
   * PROJECT_GUIDE.md) - kept inside the USER CODE block on purpose so CubeMX
   * regeneration won't silently drop it.
   */

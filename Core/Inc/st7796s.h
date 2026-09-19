@@ -1,0 +1,68 @@
+/**
+  ******************************************************************************
+  * @file    st7796s.h
+  * @brief   Minimal ST7796S driver (3.5" 320x480 TFT) over 4-wire SPI.
+  *
+  * Wiring (module "SPI" header <-> board headers, see hardware/f407.sch):
+  *   SCL   -> PC10 SPI3_SCK   (SV4.3)
+  *   SDA   -> PC12 SPI3_MOSI  (SV4.1)
+  *   SDA-O -> PC11 SPI3_MISO  (SV4.2)   optional, only needed for ReadID
+  *   CS    -> PA15            (SV4.4)   software-driven GPIO
+  *   DC    -> PB6             (SV5.4)
+  *   RST   -> PB7             (SV5.3)
+  *   BL    -> PB8             (SV1.3)   high = backlight on
+  *   GND   -> GND             (SV4.6)
+  *   VCC   -> +5V             (SV4.5)   module must have its own 3.3 V LDO;
+  *                                        otherwise +3V3 from SV2.1
+  * Module IM0..IM2 solder jumpers must be set to the "SPI" (4-wire) column.
+  ******************************************************************************
+  */
+
+#ifndef ST7796S_H
+#define ST7796S_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "main.h"
+
+/* Panel geometry in the default (portrait, MADCTL rotation 0) orientation */
+#define ST7796S_WIDTH   320U
+#define ST7796S_HEIGHT  480U
+
+/* RGB565 helpers */
+#define ST7796S_RGB(r, g, b) \
+  ((uint16_t)((((uint16_t)(r) & 0xF8U) << 8) | (((uint16_t)(g) & 0xFCU) << 3) | ((uint16_t)(b) >> 3)))
+#define ST7796S_BLACK   0x0000U
+#define ST7796S_WHITE   0xFFFFU
+#define ST7796S_RED     0xF800U
+#define ST7796S_GREEN   0x07E0U
+#define ST7796S_BLUE    0x001FU
+#define ST7796S_YELLOW  0xFFE0U
+#define ST7796S_CYAN    0x07FFU
+#define ST7796S_MAGENTA 0xF81FU
+
+void     ST7796S_Init(SPI_HandleTypeDef *hspi);
+void     ST7796S_Backlight(uint8_t on);
+/* Rotation 0..3 = portrait, landscape, portrait flipped, landscape flipped */
+void     ST7796S_SetRotation(uint8_t rotation);
+uint16_t ST7796S_Width(void);
+uint16_t ST7796S_Height(void);
+
+/* Reads RDID4 (0xD3): 4 raw bytes, ST7796S answers xx 00 77 96. Needs SDA-O
+   wired to PC11. Returns the raw bytes so a log can show exactly what came
+   back (a 1-bit shift is normal for this controller in 4-wire SPI). */
+void     ST7796S_ReadID(uint8_t out[4]);
+
+void     ST7796S_FillScreen(uint16_t color);
+void     ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+/* Hardware smoke test: colour bars, white border and a checkerboard corner.
+   Wrong colours / mirrored layout tell which MADCTL bits the panel needs. */
+void     ST7796S_DrawTestPattern(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ST7796S_H */
