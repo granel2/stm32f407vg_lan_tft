@@ -58,14 +58,16 @@ void TFT_App_SPI3_Init(void);
   *         status screen (see TFT_App_AlivePoll()). Call once, before
   *         lwIP/Ethernet bring-up so its blocking delays can't stall DHCP/RX.
   *
-  * @param  server_str  "a.b.c.d:port" the TCP echo client will try to reach
-  *                      - shown once on the SERVER: row (it's a compile-time
-  *                      constant, doesn't change at runtime). Format it from
-  *                      TCP_ECHO_SERVER_* (tcp_echo_client.h) in main.c; kept
-  *                      as a plain string here so this module still doesn't
-  *                      need any lwIP/tcp_echo_client headers.
+  * @param  server_str   "a.b.c.d:port" the TCP echo client will try to
+  *                       reach - shown once on the SERVER: row. Persisted/
+  *                       runtime-configurable now (Config/Inc/device_config.h),
+  *                       formatted by main.c and passed as a plain string so
+  *                       this module still doesn't need any lwIP/
+  *                       tcp_echo_client/device_config headers.
+  * @param  device_name  Persisted device name/label - shown once on the
+  *                       NAME: row, same reasoning as server_str above.
   */
-void TFT_App_SmokeTest(const char *server_str);
+void TFT_App_SmokeTest(const char *server_str, const char *device_name);
 
 /**
   * @brief  Non-blocking: once a second, redraws the LINK/DHCP/IP/TCP/UPTIME

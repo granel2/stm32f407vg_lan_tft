@@ -4,6 +4,14 @@
   * @brief   Minimal TCP client used as the first ETH/lwIP smoke test:
   *          connects to a configurable server, sends a counter message every
   *          few seconds, and prints back over UART1 whatever the server echoes.
+  *
+  *          The target address/port used to be TCP_ECHO_SERVER_IP0..3/PORT,
+  *          compile-time-only constants here - changing the server meant a
+  *          full rebuild+reflash. Now read at connect time from
+  *          Config/Inc/device_config.h's DeviceConfig.server_ip/server_port
+  *          (persisted in Flash, settable at runtime over the network - see
+  *          Config/Src/config_server.c), with the same values as compiled-in
+  *          defaults for a first boot with blank Flash.
   ******************************************************************************
   */
 #ifndef __TCP_ECHO_CLIENT_H__
@@ -11,15 +19,6 @@
 
 #include <stdint.h>
 #include "lwip/netif.h"
-
-/* Real test server on the LAN (was a placeholder, 10.0.1.18 - never actually
-   listened on anything). Run e.g. `nc -lk 5000` on 10.0.1.16 to see this
-   client's counter messages and have it echo something back. */
-#define TCP_ECHO_SERVER_IP0   10
-#define TCP_ECHO_SERVER_IP1   0
-#define TCP_ECHO_SERVER_IP2   1
-#define TCP_ECHO_SERVER_IP3   16
-#define TCP_ECHO_SERVER_PORT  5000
 
 /* Call once the netif is up and has a valid IP (see main.c main loop). */
 void tcp_echo_client_init(void);

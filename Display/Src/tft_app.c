@@ -145,6 +145,7 @@ typedef enum
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
 #define STATUS_Y_CHIPID    270U   /* CRC32 of the 96-bit chip ID - see stm32_uid_crc32() */
+#define STATUS_Y_NAME      300U   /* device_config's name field - static, set once from main.c */
 
 /* STM32F4's 96-bit factory-programmed unique device ID: three consecutive
    32-bit words in OTP, memory-mapped read-only - no peripheral clock or
@@ -217,6 +218,7 @@ static uint32_t stm32_uid_crc32(void)
 static uint32_t tft_frame_ms;      /* last measured full-screen fill, for the log/screen */
 static char     s_server_str[32];  /* SERVER: value, stashed so re-entering the SETUP page
                                        after boot can redraw it without main.c's help */
+static char     s_device_name[24]; /* NAME: value, same reasoning - see device_config.h */
 static TFT_Page s_page = TFT_PAGE_SETUP;
 static uint8_t  s_blink_phase;     /* file-scope (not local to TFT_App_AlivePoll) so
                                        draw_page_chrome() can repaint the heartbeat square
@@ -356,8 +358,10 @@ static void draw_page_setup_static(void)
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_UPTIME, "UPTIME:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_CHIPID, "CHIP ID:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_NAME,   "NAME:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
 
   status_draw_value(STATUS_Y_SERVER, s_server_str);
+  status_draw_value(STATUS_Y_NAME,   s_device_name);
   {
     char msg[24];
     snprintf(msg, sizeof(msg), "%lu MS", (unsigned long)tft_frame_ms);
@@ -446,10 +450,12 @@ void TFT_App_ShowReceived(const char *text)
   *                each), finally the multi-page status screen, starting on
   *                SETUP (see draw_page_static() and TFT_App_AlivePoll()).
   *
-  * @param  server_str  "a.b.c.d:port" the TCP client will (re)connect to -
-  *                      stashed and shown on the SETUP page's SERVER: row.
+  * @param  server_str   "a.b.c.d:port" the TCP client will (re)connect to -
+  *                       stashed and shown on the SETUP page's SERVER: row.
+  * @param  device_name  device_config's name field - stashed and shown on
+  *                       the SETUP page's NAME: row.
   */
-void TFT_App_SmokeTest(const char *server_str)
+void TFT_App_SmokeTest(const char *server_str, const char *device_name)
 {
   static const uint16_t fills[4] = { ST7796S_RED, ST7796S_GREEN, ST7796S_BLUE, ST7796S_WHITE };
   uint8_t id[4];
@@ -502,6 +508,7 @@ void TFT_App_SmokeTest(const char *server_str)
      vanish entirely (ST7796S_FillRect() drops draws once y >= tft_height). */
   ST7796S_SetRotation(0U);
   snprintf(s_server_str, sizeof(s_server_str), "%s", server_str);
+  snprintf(s_device_name, sizeof(s_device_name), "%s", device_name);
   snprintf(msg, sizeof(msg), "[tft] chip UID = %08lX%08lX%08lX (CRC32 %08lX)\r\n",
            (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1), (unsigned long)stm32_uid_word(2),
            (unsigned long)stm32_uid_crc32());

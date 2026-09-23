@@ -33,6 +33,8 @@
 #include "stm32f4xx_hal_eth.h"
 #include "lwip/stats.h"
 #include "tft_app.h"
+#include "device_config.h"
+#include "config_server.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -137,21 +139,26 @@ int main(void)
     snprintf(boot_msg, sizeof(boot_msg), "\r\n[boot] firmware built %s %s\r\n", __DATE__, __TIME__);
     Debug_Print(boot_msg);
   }
+  /* Load persisted settings (server address, device name, static-IP-vs-DHCP
+     choice - see Config/Inc/device_config.h) before anything that needs
+     them: the SETUP page's SERVER:/NAME: rows below, and MX_LWIP_Init()'s
+     static/DHCP branch further down. Falls back to compiled-in defaults on
+     first boot (blank Flash) or a version mismatch. */
+  device_config_load();
+
   /* TFT bring-up runs before lwIP so its blocking HAL_Delay()s can't stall
      Ethernet RX/DHCP; the panel just shows a static test pattern afterwards. */
   TFT_App_SPI3_Init();
   {
-    /* TCP_ECHO_SERVER_* are compile-time constants (tcp_echo_client.h) -
-       format once here so tft_app.c can show the target on its SERVER: row
-       without needing to include that (lwIP-pulling) header itself. */
+    const DeviceConfig *cfg = device_config_get();
     char server_str[24];
     snprintf(server_str, sizeof(server_str), "%u.%u.%u.%u:%u",
-             TCP_ECHO_SERVER_IP0, TCP_ECHO_SERVER_IP1,
-             TCP_ECHO_SERVER_IP2, TCP_ECHO_SERVER_IP3, TCP_ECHO_SERVER_PORT);
-    TFT_App_SmokeTest(server_str);
+             cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3], cfg->server_port);
+    TFT_App_SmokeTest(server_str, cfg->name);
   }
   MX_LWIP_Init();
   tcp_echo_client_init();
+  config_server_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -520,20 +527,35 @@ void Test_Blink_LEDs(void)
 }
 
 /**
-  * @brief  Bring up lwIP and the Ethernet netif (DHCP, no static IP).
+  * @brief  Bring up lwIP and the Ethernet netif - static IP or DHCP,
+  *         per device_config_get()->use_static_ip (device_config_load()
+  *         must have already run - see main(), USER CODE 2). Switching
+  *         between the two modes needs a reboot to take effect (this
+  *         function only runs once, at boot) - config_server.c's "SET IP
+  *         ..." commands say so in their reply.
   */
 static void MX_LWIP_Init(void)
 {
+  const DeviceConfig *cfg = device_config_get();
   ip4_addr_t ipaddr, netmask, gw;
 
   g_eth_debug_marker = 50;
   lwip_init();
   g_eth_debug_marker = 51;
 
-  /* All zero: ethernetif_init()/dhcp_start() will fill the real address in. */
-  IP4_ADDR(&ipaddr, 0, 0, 0, 0);
-  IP4_ADDR(&netmask, 0, 0, 0, 0);
-  IP4_ADDR(&gw, 0, 0, 0, 0);
+  if (cfg->use_static_ip != 0U)
+  {
+    IP4_ADDR(&ipaddr,  cfg->static_ip[0],      cfg->static_ip[1],      cfg->static_ip[2],      cfg->static_ip[3]);
+    IP4_ADDR(&netmask, cfg->static_netmask[0], cfg->static_netmask[1], cfg->static_netmask[2], cfg->static_netmask[3]);
+    IP4_ADDR(&gw,      cfg->static_gw[0],      cfg->static_gw[1],      cfg->static_gw[2],      cfg->static_gw[3]);
+  }
+  else
+  {
+    /* All zero: ethernetif_init()/dhcp_start() will fill the real address in. */
+    IP4_ADDR(&ipaddr, 0, 0, 0, 0);
+    IP4_ADDR(&netmask, 0, 0, 0, 0);
+    IP4_ADDR(&gw, 0, 0, 0, 0);
+  }
 
   netif_add(&gnetif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &ethernet_input);
   g_eth_debug_marker = 52;
@@ -544,9 +566,19 @@ static void MX_LWIP_Init(void)
   if (netif_is_link_up(&gnetif))
   {
     netif_set_up(&gnetif);
-    dhcp_start(&gnetif);
+    if (cfg->use_static_ip != 0U)
+    {
+      /* Address is already fixed above - no DHCP transaction needed, and
+         netif_set_up() alone is what fires netif_status_callback() so the
+         IP shows up on the SETUP page / UART log same as the DHCP path. */
+      Debug_Print("[lwip] link up, using static IP\r\n");
+    }
+    else
+    {
+      dhcp_start(&gnetif);
+      Debug_Print("[lwip] link up, DHCP started\r\n");
+    }
     g_eth_debug_marker = 54;
-    Debug_Print("[lwip] link up, DHCP started\r\n");
   }
   else
   {

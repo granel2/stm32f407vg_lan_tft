@@ -9,6 +9,7 @@
   ******************************************************************************
   */
 #include "tcp_echo_client.h"
+#include "device_config.h"
 #include "lwip/tcp.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/pbuf.h"
@@ -233,11 +234,16 @@ static err_t on_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
 
 static void start_connect(void)
 {
+  const DeviceConfig *cfg = device_config_get();
   ip_addr_t ip;
   err_t err;
+  uint16_t server_port = cfg->server_port;
 
-  IP4_ADDR(&ip, TCP_ECHO_SERVER_IP0, TCP_ECHO_SERVER_IP1,
-           TCP_ECHO_SERVER_IP2, TCP_ECHO_SERVER_IP3);
+  /* Read fresh every (re)connect attempt, not cached - so a config_server.c
+     "SET SERVER ..." takes effect on the very next retry, no reboot
+     needed (unlike the static-IP/DHCP choice, which does need one - see
+     Config/Inc/device_config.h). */
+  IP4_ADDR(&ip, cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3]);
 
   s_pcb = tcp_new();
   if (s_pcb == NULL)
@@ -255,7 +261,7 @@ static void start_connect(void)
   s_pcb->so_options |= SOF_KEEPALIVE;
 
   s_state = ECHO_STATE_CONNECTING;
-  err = tcp_connect(s_pcb, &ip, TCP_ECHO_SERVER_PORT, on_connected);
+  err = tcp_connect(s_pcb, &ip, server_port, on_connected);
   if (err != ERR_OK)
   {
     char msg[160];
@@ -321,7 +327,7 @@ uint16_t tcp_echo_client_take_last_rx(char *buf, uint16_t buf_size)
 
   if ((s_last_rx_fresh == 0U) || (buf_size == 0U)) { return 0U; }
 
-  n = (s_last_rx_len < (buf_size - 1U)) ? s_last_rx_len : (buf_size - 1U);
+  n = (s_last_rx_len < (uint16_t)(buf_size - 1U)) ? s_last_rx_len : (uint16_t)(buf_size - 1U);
   memcpy(buf, s_last_rx, n);
   buf[n] = '\0';
   s_last_rx_fresh = 0U;

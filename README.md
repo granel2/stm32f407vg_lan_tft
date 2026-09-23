@@ -9,6 +9,7 @@ STM32F407VGT6 + LAN8720 (Ethernet, lwIP, DHCP, TCP-клиент) + 3.5" TFT-ди
 |---|---|
 | `Core/Inc`, `Core/Src`, `Core/Startup` | Ethernet/lwIP-часть: HAL MSP, прерывания, lwIP-порт (`ethernetif.c`), TCP-клиент, `main.c` |
 | `Display/` | Весь дисплейный модуль, обособлен от Ethernet-кода — см. `Display/README.md` |
+| `Config/` | Постоянные настройки (сервер/имя/статический IP) + TCP-конфигуратор на порту 7000 — см. `Config/README.md` |
 | `Drivers/` | STM32Cube HAL F4 V1.28.3, CMSIS, драйвер PHY lan8742 |
 | `Middlewares/Third_Party/LwIP` | lwIP (NO_SYS=1) |
 | `CMakeLists.txt`, `CMakePresets.json`, `toolchain-arm-none-eabi.cmake`, `linker_script.ld` | Сборка |
@@ -67,5 +68,6 @@ cmake --build --preset default  # сборка → build/stm32f407vg_lan_tft.{el
 
 ## Что дальше
 
-- [x] Аппаратный тест дисплея (init, ID, заливка, паттерн)
-- [ ] Шрифт и вывод сетевого статуса (IP, link, DHCP, TCP) на экран
+Актуальные чек-листы — в README каждого модуля: [`Display/README.md`](Display/README.md)
+(дисплей, шрифт, многостраничный экран) и [`Config/README.md`](Config/README.md)
+(TCP-конфигуратор, статический IP).
