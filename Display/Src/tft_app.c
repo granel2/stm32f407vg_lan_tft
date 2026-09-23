@@ -144,11 +144,7 @@ typedef enum
 #define STATUS_Y_TCP       180U
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
-#define STATUS_Y_CHIPID    270U   /* unique 96-bit chip ID (OTP, read-only, never
-                                     changes) - label here, value spans this row
-                                     and the next (16 hex digits don't fit in one
-                                     STATUS_VALUE_CHARS-wide field) */
-#define STATUS_Y_CHIPID2   300U
+#define STATUS_Y_CHIPID    270U   /* CRC32 of the 96-bit chip ID - see stm32_uid_crc32() */
 
 /* STM32F4's 96-bit factory-programmed unique device ID: three consecutive
    32-bit words in OTP, memory-mapped read-only - no peripheral clock or
@@ -157,6 +153,48 @@ typedef enum
 static inline uint32_t stm32_uid_word(uint8_t index)
 {
   return *(const volatile uint32_t *)(uintptr_t)(STM32_UID_BASE + ((uint32_t)index * 4U));
+}
+
+/* Standard reflected CRC-32 (poly 0xEDB88320, init/final XOR 0xFFFFFFFF) -
+   the same algorithm as zlib's crc32()/Python's binascii.crc32()/`cksum`,
+   so the 8-hex-digit result on screen can be cross-checked with any of
+   those against the full ID logged over UART. Bit-by-bit, no lookup
+   table: this only ever runs once, over 12 bytes, so a 256-entry table
+   would just spend FLASH for no measurable speed benefit here. */
+static uint32_t crc32_compute(const uint8_t *data, uint32_t len)
+{
+  uint32_t crc = 0xFFFFFFFFU;
+
+  for (uint32_t i = 0; i < len; i++)
+  {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8U; bit++)
+    {
+      crc = ((crc & 1U) != 0U) ? ((crc >> 1) ^ 0xEDB88320U) : (crc >> 1);
+    }
+  }
+  return crc ^ 0xFFFFFFFFU;
+}
+
+/* CRC32 over the UID's 12 raw bytes, each 32-bit word taken big-endian
+   (matches the byte order the hex log/other tools would see reading the
+   three words as one 96-bit big-endian number) - a short, still
+   collision-resistant stand-in for the unwieldy 24-hex-digit full ID
+   (see Display/README.md for why: STM32's LOT_NUM field often looks like
+   plain decimal text rather than "random" hex, per RM0090 39.1). */
+static uint32_t stm32_uid_crc32(void)
+{
+  uint8_t bytes[12];
+
+  for (uint8_t w = 0; w < 3U; w++)
+  {
+    uint32_t word = stm32_uid_word(w);
+    bytes[(w * 4U) + 0U] = (uint8_t)(word >> 24);
+    bytes[(w * 4U) + 1U] = (uint8_t)(word >> 16);
+    bytes[(w * 4U) + 2U] = (uint8_t)(word >> 8);
+    bytes[(w * 4U) + 3U] = (uint8_t)(word);
+  }
+  return crc32_compute(bytes, sizeof(bytes));
 }
 
 /* RECEIVED page: "LAST MSG:" label + up to STATUS_RX_MAX_ROWS wrapped rows.
@@ -326,17 +364,15 @@ static void draw_page_setup_static(void)
     status_draw_value(STATUS_Y_FRAME, msg);
   }
   {
-    /* 96-bit unique ID as hex, 24 digits - doesn't fit one
-       STATUS_VALUE_CHARS(16)-wide field, so split 16+8 across two rows.
-       Read-only OTP, set at the factory - never changes, so (like
-       SERVER:/FRAME: above) this is drawn once here, not refreshed by
+    /* CRC32 of the 96-bit unique ID: 8 hex digits, fits one line (unlike
+       the raw 24-digit ID - see stm32_uid_crc32()'s comment for why this
+       is what's shown instead of the full value). Read-only/derived from
+       OTP, set at the factory - never changes, so (like SERVER:/FRAME:
+       above) this is drawn once here, not refreshed by
        TFT_App_AlivePoll(). */
-    char line1[17];
-    char line2[9];
-    snprintf(line1, sizeof(line1), "%08lX%08lX", (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1));
-    snprintf(line2, sizeof(line2), "%08lX", (unsigned long)stm32_uid_word(2));
-    status_draw_value(STATUS_Y_CHIPID,  line1);
-    status_draw_value(STATUS_Y_CHIPID2, line2);
+    char msg[16];
+    snprintf(msg, sizeof(msg), "%08lX", (unsigned long)stm32_uid_crc32());
+    status_draw_value(STATUS_Y_CHIPID, msg);
   }
   /* LINK/DHCP/IP/TCP/UPTIME are left blank here - TFT_App_AlivePoll() fills
      them in on its very next call (forced immediately after a page switch,
@@ -466,8 +502,9 @@ void TFT_App_SmokeTest(const char *server_str)
      vanish entirely (ST7796S_FillRect() drops draws once y >= tft_height). */
   ST7796S_SetRotation(0U);
   snprintf(s_server_str, sizeof(s_server_str), "%s", server_str);
-  snprintf(msg, sizeof(msg), "[tft] chip UID = %08lX%08lX%08lX\r\n",
-           (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1), (unsigned long)stm32_uid_word(2));
+  snprintf(msg, sizeof(msg), "[tft] chip UID = %08lX%08lX%08lX (CRC32 %08lX)\r\n",
+           (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1), (unsigned long)stm32_uid_word(2),
+           (unsigned long)stm32_uid_crc32());
   Debug_Print(msg);
   s_page = TFT_PAGE_SETUP;
   draw_page_static(s_page);
