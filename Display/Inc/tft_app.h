@@ -57,8 +57,15 @@ void TFT_App_SPI3_Init(void);
   *         pattern in all 4 rotations, then switches to the operational
   *         status screen (see TFT_App_AlivePoll()). Call once, before
   *         lwIP/Ethernet bring-up so its blocking delays can't stall DHCP/RX.
+  *
+  * @param  server_str  "a.b.c.d:port" the TCP echo client will try to reach
+  *                      - shown once on the SERVER: row (it's a compile-time
+  *                      constant, doesn't change at runtime). Format it from
+  *                      TCP_ECHO_SERVER_* (tcp_echo_client.h) in main.c; kept
+  *                      as a plain string here so this module still doesn't
+  *                      need any lwIP/tcp_echo_client headers.
   */
-void TFT_App_SmokeTest(void);
+void TFT_App_SmokeTest(const char *server_str);
 
 /**
   * @brief  Non-blocking: once a second, redraws the LINK/DHCP/IP/TCP/UPTIME

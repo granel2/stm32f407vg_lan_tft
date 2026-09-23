@@ -43,26 +43,11 @@
     {
       "label": "Flash STM32F407VG",
       "type": "shell",
-      "command": "openocd",
+      "command": "powershell",
       "args": [
-        "-f",
-        "interface/stlink.cfg",
-        "-f",
-        "target/stm32f4x.cfg",
-        "-c",
-        "init",
-        "-c",
-        "reset halt",
-        "-c",
-        "stm32f4x mass_erase 0",
-        "-c",
-        "flash write_image build/stm32f407vg_lan_tft.bin 0x08000000",
-        "-c",
-        "verify_image build/stm32f407vg_lan_tft.bin 0x08000000",
-        "-c",
-        "reset run",
-        "-c",
-        "exit"
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/scripts/flash-progress.ps1"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

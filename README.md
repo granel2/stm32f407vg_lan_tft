@@ -37,8 +37,20 @@ cmake --build --preset default  # сборка → build/stm32f407vg_lan_tft.{el
 
 ## Прошивка и отладка
 
-- Задача VS Code `Flash STM32F407VG` (OpenOCD, ST-Link, `write_image` + `verify_image`).
-  Команда `program … verify` в текущей сборке OpenOCD глючит — подробности в `docs/PROJECT_GUIDE.md`.
+- Задача VS Code `Flash STM32F407VG` — `scripts/flash-progress.ps1`, обёртка над той же
+  последовательностью OpenOCD (`init` → `reset halt` → `mass_erase` → `write_image` →
+  `verify_image` → `reset run`; ST-Link). Команда `program … verify` в текущей сборке
+  OpenOCD глючит — подробности в `docs/PROJECT_GUIDE.md`, поэтому по-прежнему используется
+  явная последовательность, а не `program`. Обёртка добавляет текстовую шкалу прогресса
+  в терминал (OpenOCD сам не печатает прогресс во время записи, только итог) — она
+  ориентируется на время (калибровка ~20 с под текущий размер прошивки), реальный вывод
+  OpenOCD печатается полностью после завершения.
+- Есть составная задача `Build + Flash` (сборка + прошивка одной командой,
+  `.vscode/tasks.json`); запускать через `Ctrl+Shift+P` → `Tasks: Run Task`. `F5`
+  (Run and Debug) тоже сначала пересобирает — см. `preLaunchTask` в `launch.json`.
+  Личные горячие клавиши на конкретные задачи — дело вкуса, настраиваются в
+  `keybindings.json` пользователя (VS Code не поддерживает keybindings, привязанные
+  к конкретному проекту, поэтому в репозитории их нет).
 - Отладка: конфигурация `Cortex Debug (ST-Link)` в `launch.json` (расширение `marus25.cortex-debug`).
 
 ## TFT 3.5" ST7796S (320×480), 4-wire SPI

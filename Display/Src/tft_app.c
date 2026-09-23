@@ -108,11 +108,13 @@ void TFT_App_SPI3_Init(void)
 #define STATUS_Y_LINK      60U
 #define STATUS_Y_DHCP      90U
 #define STATUS_Y_IP        120U
-#define STATUS_Y_TCP       150U
-#define STATUS_Y_UPTIME    190U
-#define STATUS_Y_FRAME     220U
+#define STATUS_Y_SERVER    150U   /* tcp_echo_client's target address:port - static,
+                                     set once from main.c's TCP_ECHO_SERVER_* macros */
+#define STATUS_Y_TCP       180U
+#define STATUS_Y_UPTIME    210U
+#define STATUS_Y_FRAME     240U
 #define STATUS_BLINK_X     20U   /* 40x40 heartbeat square, toggles every second */
-#define STATUS_BLINK_Y     260U
+#define STATUS_BLINK_Y     280U
 
 static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/screen */
 
@@ -136,11 +138,18 @@ static void status_draw_value(uint16_t y, const char *text)
 
 /**
   * @brief  Draws the status screen's static parts once: title, all labels,
-  *         and the one-shot frame-fill-time measurement. The values next to
-  *         LINK/DHCP/IP/TCP/UPTIME are left blank here - TFT_App_AlivePoll()
-  *         fills them in on its first call and every second after.
+  *         the one-shot frame-fill-time measurement, and the tcp_echo_client
+  *         target address:port (also static - it's a compile-time constant,
+  *         see tcp_echo_client.h). The values next to LINK/DHCP/IP/TCP/UPTIME
+  *         are left blank here - TFT_App_AlivePoll() fills them in on its
+  *         first call and every second after.
+  *
+  * @param  server_str  "a.b.c.d:port" the TCP client is (re)connecting to,
+  *                      formatted by main.c from TCP_ECHO_SERVER_* - kept out
+  *                      of this module so it doesn't need tcp_echo_client.h
+  *                      (and the lwIP headers that pulls in).
   */
-static void status_draw_static(void)
+static void status_draw_static(const char *server_str)
 {
   ST7796S_FillScreen(ST7796S_BLACK);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TITLE, "STM32F407 STATUS", ST7796S_YELLOW, ST7796S_BLACK, STATUS_FONT_SCALE);
@@ -148,10 +157,12 @@ static void status_draw_static(void)
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_LINK,   "LINK:",   ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_DHCP,   "DHCP:",   ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_IP,     "IP:",     ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_SERVER, "SERVER:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TCP,    "TCP:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_UPTIME, "UPTIME:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
 
+  status_draw_value(STATUS_Y_SERVER, server_str);
   {
     char msg[24];
     snprintf(msg, sizeof(msg), "%lu MS", (unsigned long)tft_frame_ms);
@@ -167,8 +178,12 @@ static void status_draw_static(void)
   *                test pattern rotated through all 4 orientations (0.8 s
   *                each), finally the LINK/DHCP/IP/TCP/UPTIME status screen
   *                (see status_draw_static() and TFT_App_AlivePoll()).
+  *
+  * @param  server_str  "a.b.c.d:port" the TCP client will (re)connect to -
+  *                      passed through to the static SERVER: row, see
+  *                      status_draw_static().
   */
-void TFT_App_SmokeTest(void)
+void TFT_App_SmokeTest(const char *server_str)
 {
   static const uint16_t fills[4] = { ST7796S_RED, ST7796S_GREEN, ST7796S_BLUE, ST7796S_WHITE };
   uint8_t id[4];
@@ -217,7 +232,7 @@ void TFT_App_SmokeTest(void)
   /* 4. Set up the operational status screen (labels + one-shot frame-time
      value). TFT_App_AlivePoll() fills in LINK/DHCP/IP/TCP/UPTIME and keeps
      them current from here on - see main.c's while(1) loop. */
-  status_draw_static();
+  status_draw_static(server_str);
   Debug_Print("[tft] smoke test done, status screen running\r\n");
 }
 

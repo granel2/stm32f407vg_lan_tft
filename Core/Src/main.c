@@ -140,7 +140,16 @@ int main(void)
   /* TFT bring-up runs before lwIP so its blocking HAL_Delay()s can't stall
      Ethernet RX/DHCP; the panel just shows a static test pattern afterwards. */
   TFT_App_SPI3_Init();
-  TFT_App_SmokeTest();
+  {
+    /* TCP_ECHO_SERVER_* are compile-time constants (tcp_echo_client.h) -
+       format once here so tft_app.c can show the target on its SERVER: row
+       without needing to include that (lwIP-pulling) header itself. */
+    char server_str[24];
+    snprintf(server_str, sizeof(server_str), "%u.%u.%u.%u:%u",
+             TCP_ECHO_SERVER_IP0, TCP_ECHO_SERVER_IP1,
+             TCP_ECHO_SERVER_IP2, TCP_ECHO_SERVER_IP3, TCP_ECHO_SERVER_PORT);
+    TFT_App_SmokeTest(server_str);
+  }
   MX_LWIP_Init();
   tcp_echo_client_init();
   /* USER CODE END 2 */
