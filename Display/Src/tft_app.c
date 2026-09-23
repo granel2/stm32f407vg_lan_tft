@@ -284,7 +284,13 @@ void TFT_App_SmokeTest(const char *server_str)
 
   /* 4. Set up the operational status screen (labels + one-shot frame-time
      value). TFT_App_AlivePoll() fills in LINK/DHCP/IP/TCP/UPTIME and keeps
-     them current from here on - see main.c's while(1) loop. */
+     them current from here on - see main.c's while(1) loop.
+     MUST reset rotation to portrait first: the loop above leaves it at
+     r=3, where tft_height is 320 (landscape), not the 480 every Y position
+     below assumes - anything past y=320 (LAST MSG:'s value row and the
+     heartbeat square) would silently get clipped or vanish entirely
+     (ST7796S_FillRect() drops draws once y >= tft_height). */
+  ST7796S_SetRotation(0U);
   status_draw_static(server_str);
   Debug_Print("[tft] smoke test done, status screen running\r\n");
 }
