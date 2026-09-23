@@ -77,11 +77,12 @@ void TFT_App_SmokeTest(const char *server_str);
 void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state);
 
 /**
-  * @brief  Shows `text` on the status screen's LAST MSG: row for 2 s (one
-  *         line, truncated at the first CR/LF and to however many
-  *         characters fit), then TFT_App_AlivePoll() blanks it again on its
-  *         own. Non-blocking. Call from main.c only when
-  *         tcp_echo_client_take_last_rx() actually returned new data.
+  * @brief  Shows `text` below the status screen's LAST MSG: label for 2 s
+  *         (word-wrapped by character count across up to STATUS_RX_MAX_ROWS
+  *         rows, splitting on the server's own line breaks first), then
+  *         TFT_App_AlivePoll() blanks it again on its own. Non-blocking.
+  *         Call from main.c only when tcp_echo_client_take_last_rx()
+  *         actually returned new data.
   */
 void TFT_App_ShowReceived(const char *text);
 

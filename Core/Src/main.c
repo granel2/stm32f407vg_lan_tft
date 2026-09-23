@@ -194,7 +194,7 @@ int main(void)
            drained something new, so an unrelated call here can't restart
            the 2 s timer on stale text. */
         {
-          char rx_snapshot[80];
+          char rx_snapshot[220];  /* match tcp_echo_client.c's LAST_RX_SNAPSHOT_SIZE */
           if (tcp_echo_client_take_last_rx(rx_snapshot, sizeof(rx_snapshot)) > 0U)
           {
             TFT_App_ShowReceived(rx_snapshot);

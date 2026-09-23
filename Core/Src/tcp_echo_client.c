@@ -67,7 +67,8 @@ static uint16_t s_rx_len;
 /* Independent of s_rx_buf above: taken (and immediately truncated to this
    size) at the same point s_rx_buf is drained to UART, so a slow/blocked
    display update can never affect the debug log path or vice versa. */
-#define LAST_RX_SNAPSHOT_SIZE  96U
+#define LAST_RX_SNAPSHOT_SIZE  220U  /* a 3-line reply with Cyrillic (UTF-8, 2 B/char)
+                                        already runs ~100 B - leave real headroom */
 static char     s_last_rx[LAST_RX_SNAPSHOT_SIZE];
 static uint16_t s_last_rx_len;
 static uint8_t  s_last_rx_fresh;   /* 1 = not yet consumed by tcp_echo_client_take_last_rx() */

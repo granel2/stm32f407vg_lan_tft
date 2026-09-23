@@ -114,15 +114,20 @@ void TFT_App_SPI3_Init(void)
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
 #define STATUS_Y_RXLABEL   280U   /* static "LAST MSG:" label, drawn once */
-#define STATUS_Y_RX        310U   /* transient: last TCP receive, see TFT_App_ShowReceived() */
 #define STATUS_RX_CHARS    23U    /* (320 - 2*STATUS_LABEL_X) / ST7796S_CharPitch(STATUS_FONT_SCALE) */
+#define STATUS_RX_ROW_H    18U    /* row pitch - a bit tighter than the glyph's own 14 px
+                                     (STATUS_FONT_SCALE*7) so more rows fit */
+#define STATUS_RX_MAX_ROWS 7U     /* wrapped/multi-line received text, see TFT_App_ShowReceived() */
+#define STATUS_Y_RX0       302U   /* first RX row's Y; row i is at STATUS_Y_RX0 + i*STATUS_RX_ROW_H */
 #define STATUS_RX_SHOW_MS  2000U
 #define STATUS_BLINK_X     20U   /* 40x40 heartbeat square, toggles every second */
-#define STATUS_BLINK_Y     350U
+#define STATUS_BLINK_Y     434U  /* below the RX rows: STATUS_Y_RX0 + STATUS_RX_MAX_ROWS*STATUS_RX_ROW_H = 428 */
 
-static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/screen */
-static uint32_t s_rx_hide_tick;  /* HAL_GetTick() value at which to blank STATUS_Y_RX */
-static uint8_t  s_rx_showing;    /* 1 while a received message is on screen, unexpired */
+static uint32_t tft_frame_ms;   /* last measured full-screen fill, for the log/screen */
+static uint32_t s_rx_hide_tick; /* HAL_GetTick() value at which to blank the RX rows */
+static uint8_t  s_rx_showing;   /* 1 while a received message is on screen, unexpired */
+static uint16_t s_rx_rows_used; /* how many RX rows the current message actually drew -
+                                    exactly this many get blanked again on expiry, no more */
 
 /* Draws `text` right-padded to `chars` with spaces before handing it to
    ST7796S_DrawString(), so this always repaints the exact same pixel width
@@ -188,37 +193,73 @@ static void status_draw_static(const char *server_str)
 }
 
 /**
-  * @brief  Shows `text` on the LAST MSG: row (yellow, one line) for
-  *         STATUS_RX_SHOW_MS (2 s), then TFT_App_AlivePoll() blanks it again
-  *         on its own - see the expiry check at the top of that function.
-  *         Non-blocking: only draws once per call, no HAL_Delay(). Call from
-  *         main.c only when tcp_echo_client_take_last_rx() actually returned
-  *         new data - calling it with nothing new would just restart the
-  *         2 s timer on stale text.
+  * @brief  Shows `text` below LAST MSG: (yellow, up to STATUS_RX_MAX_ROWS
+  *         rows) for STATUS_RX_SHOW_MS (2 s), then TFT_App_AlivePoll()
+  *         blanks it again on its own - see the expiry check at the top of
+  *         that function. Non-blocking: only draws once per call, no
+  *         HAL_Delay(). Call from main.c only when
+  *         tcp_echo_client_take_last_rx() actually returned new data -
+  *         calling it with nothing new would just restart the 2 s timer on
+  *         stale text.
   *
-  *         A reply spanning several lines (the server can send more than
-  *         one) is shown as just its first line: this is one fixed-width
-  *         row like the rest of the screen, not a text box. Bytes outside
-  *         the small font's charset (letters/digits/`. : - /`only - see
-  *         st7796s.c) render as blank cells rather than garbage, so e.g. a
-  *         Cyrillic reply shows only its ASCII portions.
+  *         `text` is split on the server's own line breaks (CR, LF, or
+  *         CRLF/LFCR treated as one), and each of those source lines is
+  *         then wrapped to STATUS_RX_CHARS-wide screen rows (a plain
+  *         character-count wrap, not word-aware). Stops at
+  *         STATUS_RX_MAX_ROWS - anything past that is silently dropped
+  *         rather than overflowing into the heartbeat square below; a
+  *         message that fit in fewer rows than the *previous* one still
+  *         blanks the leftover rows (s_rx_rows_used tracks how many to
+  *         clear). Bytes outside the font's charset (see st7796s.c) render
+  *         as blank cells rather than garbage, so e.g. Cyrillic text shows
+  *         only its ASCII portions.
   */
 void TFT_App_ShowReceived(const char *text)
 {
-  char line[STATUS_RX_CHARS + 1U];
+  uint16_t row = 0;
+  const char *line_start = text;
 
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wformat-truncation"
-  snprintf(line, sizeof(line), "%s", text);
-  #pragma GCC diagnostic pop
-
-  for (char *p = line; *p != '\0'; p++)
+  while ((*line_start != '\0') && (row < STATUS_RX_MAX_ROWS))
   {
-    if ((*p == '\r') || (*p == '\n')) { *p = '\0'; break; }
+    const char *line_end = line_start;
+    uint16_t pos;
+
+    while ((*line_end != '\0') && (*line_end != '\r') && (*line_end != '\n')) { line_end++; }
+
+    /* Wrap this one source line (line_start..line_end) into as many
+       STATUS_RX_CHARS-wide screen rows as it needs. */
+    for (pos = 0; ((line_start + pos) < line_end) && (row < STATUS_RX_MAX_ROWS); pos += STATUS_RX_CHARS)
+    {
+      char chunk[STATUS_RX_CHARS + 1U];
+      uint16_t remaining = (uint16_t)(line_end - (line_start + pos));
+      uint16_t n = (remaining < STATUS_RX_CHARS) ? remaining : STATUS_RX_CHARS;
+
+      memcpy(chunk, line_start + pos, n);
+      chunk[n] = '\0';
+      status_draw_field(STATUS_LABEL_X, (uint16_t)(STATUS_Y_RX0 + (row * STATUS_RX_ROW_H)),
+                        STATUS_RX_CHARS, ST7796S_YELLOW, chunk);
+      row++;
+    }
+
+    /* Skip the line break itself (CRLF/LFCR counts as one) before looking
+       for the next source line. */
+    line_start = line_end;
+    if ((*line_start == '\r') || (*line_start == '\n'))
+    {
+      char first = *line_start++;
+      if (((*line_start == '\r') || (*line_start == '\n')) && (*line_start != first)) { line_start++; }
+    }
   }
 
-  status_draw_field(STATUS_LABEL_X, STATUS_Y_RX, STATUS_RX_CHARS, ST7796S_YELLOW, line);
+  /* Message got shorter than last time: blank whatever rows it no longer
+     uses, so nothing stale lingers below the new (shorter) text. */
+  for (uint16_t r = row; r < s_rx_rows_used; r++)
+  {
+    status_draw_field(STATUS_LABEL_X, (uint16_t)(STATUS_Y_RX0 + (r * STATUS_RX_ROW_H)),
+                      STATUS_RX_CHARS, ST7796S_YELLOW, "");
+  }
 
+  s_rx_rows_used = row;
   s_rx_hide_tick = HAL_GetTick() + STATUS_RX_SHOW_MS;
   s_rx_showing = 1U;
 }
@@ -325,7 +366,12 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state)
      call after. */
   if (s_rx_showing && ((int32_t)(HAL_GetTick() - s_rx_hide_tick) >= 0))
   {
-    status_draw_field(STATUS_LABEL_X, STATUS_Y_RX, STATUS_RX_CHARS, ST7796S_YELLOW, "");
+    for (uint16_t r = 0; r < s_rx_rows_used; r++)
+    {
+      status_draw_field(STATUS_LABEL_X, (uint16_t)(STATUS_Y_RX0 + (r * STATUS_RX_ROW_H)),
+                        STATUS_RX_CHARS, ST7796S_YELLOW, "");
+    }
+    s_rx_rows_used = 0U;
     s_rx_showing = 0U;
   }
 
