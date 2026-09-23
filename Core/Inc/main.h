@@ -53,7 +53,9 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+/* Shared debug logger (USART1, 921600 baud) - defined in main.c, used from
+   here and from Display/Src/tft_app.c. */
+void Debug_Print(const char *msg);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

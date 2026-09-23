@@ -74,7 +74,8 @@ set(PROJECT_SOURCES
   Core/Src/ethernetif.c
   Core/Src/sys_arch.c
   Core/Src/tcp_echo_client.c
-  Core/Src/st7796s.c
+  Display/Src/st7796s.c
+  Display/Src/tft_app.c
   Middlewares/Third_Party/LwIP/src/core/init.c
   Middlewares/Third_Party/LwIP/src/core/def.c
   Middlewares/Third_Party/LwIP/src/core/dns.c
@@ -106,6 +107,7 @@ set(PROJECT_SOURCES
 # Include directories
 include_directories(
   ${CMAKE_SOURCE_DIR}/Core/Inc
+  ${CMAKE_SOURCE_DIR}/Display/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy
   ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include

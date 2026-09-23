@@ -7,12 +7,13 @@ STM32F407VGT6 + LAN8720 (Ethernet, lwIP, DHCP, TCP-клиент) + 3.5" TFT-ди
 
 | Путь | Что это |
 |---|---|
-| `Core/Inc`, `Core/Src`, `Core/Startup` | Прикладной код, HAL MSP, прерывания, lwIP-порт (`ethernetif.c`), TCP-клиент |
+| `Core/Inc`, `Core/Src`, `Core/Startup` | Ethernet/lwIP-часть: HAL MSP, прерывания, lwIP-порт (`ethernetif.c`), TCP-клиент, `main.c` |
+| `Display/` | Весь дисплейный модуль, обособлен от Ethernet-кода — см. `Display/README.md` |
 | `Drivers/` | STM32Cube HAL F4 V1.28.3, CMSIS, драйвер PHY lan8742 |
 | `Middlewares/Third_Party/LwIP` | lwIP (NO_SYS=1) |
 | `CMakeLists.txt`, `CMakePresets.json`, `toolchain-arm-none-eabi.cmake`, `linker_script.ld` | Сборка |
 | `stm32f407vg_lan_tft.ioc`, `.mxproject` | Проект CubeMX — **только справочно**: ETH и часть периферии добавлены руками, перегенерировать код из CubeMX нельзя |
-| `hardware/` | `BOARD.md` — выжимка по плате (разъёмы, питание, выводы); схема и плата (Eagle) `f407.sch`/`f407.brd`, распечатка схемы `f407_schematic_A3.pdf`, фото дисплея |
+| `hardware/` | `BOARD.md` — выжимка по плате (разъёмы, питание, выводы); схема и плата (Eagle) `f407.sch`/`f407.brd`, распечатка схемы `f407_schematic_A3.pdf` |
 | `docs/` | История отладки Ethernet (`PROJECT_GUIDE.md`), аппаратный фикс LAN8720 (`CHANGES_LAN8720.md`), заметки по сборке, даташиты |
 | `stm32f407vg_lan_tft.code-workspace` | Workspace VS Code |
 
@@ -42,21 +43,15 @@ cmake --build --preset default  # сборка → build/stm32f407vg_lan_tft.{el
 
 ## TFT 3.5" ST7796S (320×480), 4-wire SPI
 
-Драйвер: `Core/Src/st7796s.c` (SPI3, 10 MHz, RGB565). На модуле перемычки IM0–IM2 запаять по столбцу **SPI** таблицы на плате.
+Весь дисплейный код, схема подключения и фото платы вынесены в **[`Display/`](Display/)** —
+отдельный, не зависящий от Ethernet-части модуль, чтобы его можно было дорабатывать
+(шрифты, экран сетевого статуса) не трогая `main.c`. Подробности, распиновка и порядок
+включения — в [`Display/README.md`](Display/README.md).
 
-| Модуль (9-pin SPI) | STM32 | Разъём платы |
-|---|---|---|
-| GND | GND | SV4.6 |
-| VCC | +5V (если на модуле есть LDO) / +3V3 | SV4.5 / SV2.1 |
-| SCL | PC10 SPI3_SCK | SV4.3 |
-| SDA | PC12 SPI3_MOSI | SV4.1 |
-| SDA-O | PC11 SPI3_MISO | SV4.2 (нужен только для чтения ID) |
-| CS | PA15 (GPIO) | SV4.4 |
-| DC | PB6 | SV5.4 |
-| RST | PB7 | SV5.3 |
-| BL | PB8 (1 = вкл) | SV1.3 |
-
-При старте `TFT_SmokeTest()` печатает в USART1 `[tft] RDID4(0xD3) = …` (ожидается `xx 00 77 96`), заливает экран R/G/B и рисует тест-паттерн (цветные полосы, шахматка, рамка). Если картинка «негатив» — сменить `CMD_INVON` на `CMD_INVOFF` в `ST7796S_Init()`; если красный и синий перепутаны — убрать бит `MADCTL_BGR`.
+Коротко: SPI3 (PC10/PC11/PC12, 10 МГц) + CS/DC/RST/BL на PA15/PB6/PB7/PB8, разъём SV4+SV5(+SV1).
+При старте `TFT_App_SmokeTest()` печатает в USART1 `[tft] RDID4(0xD3) = …` (ожидается `xx 00 77 96`),
+заливает экран R/G/B и рисует тест-паттерн. Если картинка «негатив» — сменить `CMD_INVON` на
+`CMD_INVOFF` в `ST7796S_Init()`; если красный и синий перепутаны — убрать бит `MADCTL_BGR`.
 
 ## Что дальше
 

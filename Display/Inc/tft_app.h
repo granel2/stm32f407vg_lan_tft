@@ -1,0 +1,71 @@
+/**
+  ******************************************************************************
+  * @file    tft_app.h
+  * @brief   Application layer for the 3.5" ST7796S TFT: SPI3 bring-up,
+  *          boot-time hardware smoke test, and the live on-screen heartbeat.
+  *
+  * Layering:
+  *   st7796s.c/.h   - low-level controller driver (init sequence, RAMWR,
+  *                     fills, rotation, 7-segment digits). Panel-specific,
+  *                     no knowledge of this board or the application.
+  *   tft_app.c/.h   - THIS module: owns the SPI3 handle, decides what goes
+  *                     on screen and when. Board- and app-specific; this is
+  *                     the file to extend for new screens/widgets.
+  *   main.c         - calls TFT_App_SPI3_Init() + TFT_App_SmokeTest() once
+  *                     at boot (before MX_LWIP_Init(), see main.c comment),
+  *                     then TFT_App_AlivePoll() every main-loop iteration.
+  *
+  * Wiring / jumpers: see hardware/TFT_WIRING.md and hardware/TFT_3.5_board.md.
+  * Pin assignment (SPI3 + CS/DC/RST/BL): see main.h "Private defines".
+  ******************************************************************************
+  */
+#ifndef TFT_APP_H
+#define TFT_APP_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "stm32f4xx_hal.h"
+
+/* SPI3 handle for the TFT bus (PC10/11/12, header SV4). Exposed so
+   HAL_SPI_MspInit()/Error_Handler() call sites elsewhere can reference it if
+   ever needed; ordinary callers only need the functions below. */
+extern SPI_HandleTypeDef hspi3;
+
+/**
+  * @brief  Configure the TFT control GPIOs: CS (PA15, push-pull, idle high),
+  *         DC/RST/BL (PB6/PB7/PB8, push-pull, RST idle high, DC/BL idle low).
+  *         Call once, right after MX_GPIO_Init() and before
+  *         TFT_App_SPI3_Init()/TFT_App_SmokeTest().
+  */
+void TFT_App_GPIO_Init(void);
+
+/**
+  * @brief  Configure SPI3 as the TFT master (10 MHz, mode 0, software CS).
+  *         Must run before TFT_App_SmokeTest(). See tft_app.c for the
+  *         prescaler/throughput trade-off notes.
+  */
+void TFT_App_SPI3_Init(void);
+
+/**
+  * @brief  One-shot boot-time hardware check (~7 s, blocking): controller ID
+  *         readback to the debug UART, R/G/B/W fill with timing, test
+  *         pattern in all 4 rotations, then leaves the live counters running
+  *         (see TFT_App_AlivePoll()). Call once, before lwIP/Ethernet bring
+  *         up so its blocking delays can't stall DHCP/RX.
+  */
+void TFT_App_SmokeTest(void);
+
+/**
+  * @brief  Non-blocking: redraws the uptime counter and toggles a heartbeat
+  *         square once a second, returns immediately the rest of the time.
+  *         Safe to call every main-loop iteration.
+  */
+void TFT_App_AlivePoll(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* TFT_APP_H */
