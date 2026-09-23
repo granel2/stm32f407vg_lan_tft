@@ -156,3 +156,14 @@ add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
   COMMAND ${CMAKE_OBJCOPY} -O ihex ${PROJECT_NAME}.elf ${PROJECT_NAME}.hex
   COMMENT "Generate BIN and HEX files"
 )
+
+# Print FLASH/RAM usage on every build invocation, not just when the linker
+# actually re-links (a custom target with no OUTPUT has no up-to-date check,
+# so Ninja/Make always re-runs it - unlike the linker's own
+# -Wl,--print-memory-usage above, which only fires when main.elf itself gets
+# rebuilt and stays silent on a no-op "nothing changed" build).
+add_custom_target(print_size ALL
+  COMMAND ${CMAKE_SIZE} ${PROJECT_NAME}.elf
+  DEPENDS ${PROJECT_NAME}.elf
+  COMMENT "Memory usage (text+data = FLASH, data+bss = RAM)"
+)

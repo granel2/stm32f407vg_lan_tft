@@ -22,27 +22,34 @@ SPI_HandleTypeDef hspi3;
   * @brief  TFT control lines: CS idle high, RST held high (pulsed in
   *         ST7796S_Init), DC/BL idle low (backlight off until the panel is
   *         initialised). PA15 is JTDI after reset - SWD-only debugging is
-  *         unaffected by repurposing it.
+  *         unaffected by repurposing it. Written per-pin (not grouped by
+  *         port) since CS/DC/RST/BL don't all share one GPIO port - see the
+  *         pin defines in main.h.
   */
 void TFT_App_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOB, TFT_DC_Pin | TFT_BL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(TFT_DC_GPIO_Port, TFT_DC_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(TFT_RST_GPIO_Port, TFT_RST_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(TFT_BL_GPIO_Port, TFT_BL_Pin, GPIO_PIN_RESET);
+
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
 
   GPIO_InitStruct.Pin = TFT_CS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(TFT_CS_GPIO_Port, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = TFT_DC_Pin | TFT_RST_Pin | TFT_BL_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  GPIO_InitStruct.Pin = TFT_DC_Pin;
+  HAL_GPIO_Init(TFT_DC_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = TFT_RST_Pin;
+  HAL_GPIO_Init(TFT_RST_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = TFT_BL_Pin;
+  HAL_GPIO_Init(TFT_BL_GPIO_Port, &GPIO_InitStruct);
 }
 
 /**

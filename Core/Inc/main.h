@@ -74,12 +74,16 @@ void Debug_Print(const char *msg);
 
 /* USER CODE BEGIN Private defines */
 /* 3.5" ST7796S TFT on SPI3 (PC10 SCK / PC11 MISO / PC12 MOSI, header SV4).
-   CS/DC/RST/BL are plain GPIOs on the SV4/SV5/SV1 headers - see st7796s.h. */
+   CS is a plain GPIO on SV4; DC/RST/BL are plain GPIOs grouped on three
+   adjacent SV1 pins (3/4/5) - see Display/README.md and
+   Display/docs/TFT_WIRING.md. PA4/PB9 are silkscreened DAC_OUT1/RPM2 on
+   this board (hardware/BOARD.md) but unused by any peripheral here, so
+   they're free to repurpose as plain outputs - same precedent as PB8/BL. */
 #define TFT_CS_Pin GPIO_PIN_15
 #define TFT_CS_GPIO_Port GPIOA
-#define TFT_DC_Pin GPIO_PIN_6
-#define TFT_DC_GPIO_Port GPIOB
-#define TFT_RST_Pin GPIO_PIN_7
+#define TFT_DC_Pin GPIO_PIN_4
+#define TFT_DC_GPIO_Port GPIOA
+#define TFT_RST_Pin GPIO_PIN_9
 #define TFT_RST_GPIO_Port GPIOB
 #define TFT_BL_Pin GPIO_PIN_8
 #define TFT_BL_GPIO_Port GPIOB

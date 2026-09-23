@@ -8,12 +8,15 @@
   *   SDA   -> PC12 SPI3_MOSI  (SV4.1)
   *   SDA-O -> PC11 SPI3_MISO  (SV4.2)   optional, only needed for ReadID
   *   CS    -> PA15            (SV4.4)   software-driven GPIO
-  *   DC    -> PB6             (SV5.4)
-  *   RST   -> PB7             (SV5.3)
-  *   BL    -> PB8             (SV1.3)   high = backlight on
   *   GND   -> GND             (SV4.6)
   *   VCC   -> +5V             (SV4.5)   module must have its own 3.3 V LDO;
   *                                        otherwise +3V3 from SV2.1
+  *   BL    -> PB8             (SV1.3)   high = backlight on
+  *   RST   -> PB9             (SV1.4)
+  *   DC    -> PA4             (SV1.5)
+  * All of CS/DC/RST/BL are plain push-pull GPIOs, chosen so the whole panel
+  * fits on just two headers (SV4 + SV1) instead of three - see
+  * Display/README.md and Display/docs/TFT_WIRING.md.
   * Module IM0..IM2 solder jumpers must be set to the "SPI" (4-wire) column.
   ******************************************************************************
   */
