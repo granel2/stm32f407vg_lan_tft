@@ -126,11 +126,20 @@ add_executable(${PROJECT_NAME}.elf ${PROJECT_SOURCES})
 
 # Third-party/vendored code (lwIP, HAL ETH driver, lan8742 PHY driver) wasn't
 # written against this project's strict warning flags - don't make it noisy.
+# Whole HAL driver directory, not a hand-picked list - HAL files added later
+# (flash_ex for Config/, spi for Display/) otherwise silently miss it.
+file(GLOB HAL_SOURCES_FOR_WARNINGS
+  ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/*.c
+)
 set_source_files_properties(
-  Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_eth.c
-  Drivers/BSP/Components/lan8742/lan8742.c
+  ${HAL_SOURCES_FOR_WARNINGS}
+  ${CMAKE_SOURCE_DIR}/Drivers/BSP/Components/lan8742/lan8742.c
   PROPERTIES COMPILE_OPTIONS "-Wno-conversion;-Wno-shadow;-Wno-unused-parameter"
 )
+# -Wno-stringop-overflow: GCC 12+ false positive in dhcp.c dhcp_option_byte()
+# ("writing 1 byte into a region of size 0") - the write is bounds-checked by
+# the LWIP_ASSERT right above it; GCC misjudges the size of msg_out->options
+# once the pbuf payload cast is inlined.
 file(GLOB LWIP_SOURCES_FOR_WARNINGS
   ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/LwIP/src/core/*.c
   ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/LwIP/src/core/ipv4/*.c
@@ -138,7 +147,7 @@ file(GLOB LWIP_SOURCES_FOR_WARNINGS
 )
 set_source_files_properties(
   ${LWIP_SOURCES_FOR_WARNINGS}
-  PROPERTIES COMPILE_OPTIONS "-Wno-conversion;-Wno-shadow;-Wno-unused-parameter;-Wno-double-promotion"
+  PROPERTIES COMPILE_OPTIONS "-Wno-conversion;-Wno-shadow;-Wno-unused-parameter;-Wno-double-promotion;-Wno-stringop-overflow"
 )
 
 # Linker flags
