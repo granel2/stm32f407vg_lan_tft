@@ -187,6 +187,19 @@ int main(void)
       if (has_ip)
       {
         tcp_echo_client_poll();
+
+        /* Show whatever the server just sent back on the LAST MSG: row for
+           2 s (TFT_App_ShowReceived() handles the timing/blanking itself,
+           non-blocking) - only when tcp_echo_client_poll() above actually
+           drained something new, so an unrelated call here can't restart
+           the 2 s timer on stale text. */
+        {
+          char rx_snapshot[80];
+          if (tcp_echo_client_take_last_rx(rx_snapshot, sizeof(rx_snapshot)) > 0U)
+          {
+            TFT_App_ShowReceived(rx_snapshot);
+          }
+        }
       }
 
       /* Watchdog: DHCP lease loss/renewal clears the netif's IP

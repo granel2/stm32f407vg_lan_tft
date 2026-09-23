@@ -63,6 +63,15 @@ static uint16_t s_tx_len;          /* valid bytes starting at s_tx_buf[0] */
 static char     s_rx_buf[RX_BUF_SIZE];
 static uint16_t s_rx_len;
 
+/* ── "last received" snapshot, for the TFT status screen ───────────────── */
+/* Independent of s_rx_buf above: taken (and immediately truncated to this
+   size) at the same point s_rx_buf is drained to UART, so a slow/blocked
+   display update can never affect the debug log path or vice versa. */
+#define LAST_RX_SNAPSHOT_SIZE  96U
+static char     s_last_rx[LAST_RX_SNAPSHOT_SIZE];
+static uint16_t s_last_rx_len;
+static uint8_t  s_last_rx_fresh;   /* 1 = not yet consumed by tcp_echo_client_take_last_rx() */
+
 /* ── UART RX line accumulator (RXNE polling, no HAL lock) ───────────────── */
 #define UART_LINE_BUF  256U
 static char     s_uart_line[UART_LINE_BUF];
@@ -305,6 +314,19 @@ char tcp_echo_client_state_char(void)
   }
 }
 
+uint16_t tcp_echo_client_take_last_rx(char *buf, uint16_t buf_size)
+{
+  uint16_t n;
+
+  if ((s_last_rx_fresh == 0U) || (buf_size == 0U)) { return 0U; }
+
+  n = (s_last_rx_len < (buf_size - 1U)) ? s_last_rx_len : (buf_size - 1U);
+  memcpy(buf, s_last_rx, n);
+  buf[n] = '\0';
+  s_last_rx_fresh = 0U;
+  return n;
+}
+
 void tcp_echo_client_init(void)
 {
   s_pcb          = NULL;
@@ -314,6 +336,8 @@ void tcp_echo_client_init(void)
   s_msg_counter  = 0;
   s_fail_count   = 0;
   s_reset_count  = 0;
+  s_last_rx_len   = 0;
+  s_last_rx_fresh = 0;
   s_uart_line_pos   = 0;
   s_uart_line_ready = 0;
   s_next_action_tick = HAL_GetTick();
@@ -326,6 +350,15 @@ void tcp_echo_client_poll(void)
   if (s_rx_len > 0)
   {
     HAL_UART_Transmit(&huart1, (uint8_t *)s_rx_buf, s_rx_len, 50);
+
+    {
+      uint16_t n = (s_rx_len < LAST_RX_SNAPSHOT_SIZE - 1U) ? s_rx_len : (LAST_RX_SNAPSHOT_SIZE - 1U);
+      memcpy(s_last_rx, s_rx_buf, n);
+      s_last_rx[n]   = '\0';
+      s_last_rx_len  = n;
+      s_last_rx_fresh = 1U;
+    }
+
     s_rx_len = 0;
   }
 

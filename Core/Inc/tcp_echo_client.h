@@ -39,4 +39,13 @@ char tcp_echo_client_state_char(void);
    being freed on ACK - see PROJECT_GUIDE.md. */
 uint16_t tcp_echo_client_sndqueuelen(void);
 
+/* For the TFT status screen (main.c): copies whatever was most recently
+   received from the server into `buf` (NUL-terminated, truncated to
+   buf_size - 1), returns the byte count written, 0 if nothing new since
+   the last call. Each received chunk is handed out exactly once - call
+   this once per main-loop iteration and pass a non-zero result straight to
+   TFT_App_ShowReceived(). Independent of the UART debug echo (both are
+   fed from the same received data, neither affects the other). */
+uint16_t tcp_echo_client_take_last_rx(char *buf, uint16_t buf_size);
+
 #endif /* __TCP_ECHO_CLIENT_H__ */

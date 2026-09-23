@@ -113,27 +113,43 @@ void TFT_App_SPI3_Init(void)
 #define STATUS_Y_TCP       180U
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
+#define STATUS_Y_RXLABEL   280U   /* static "LAST MSG:" label, drawn once */
+#define STATUS_Y_RX        310U   /* transient: last TCP receive, see TFT_App_ShowReceived() */
+#define STATUS_RX_CHARS    23U    /* (320 - 2*STATUS_LABEL_X) / ST7796S_CharPitch(STATUS_FONT_SCALE) */
+#define STATUS_RX_SHOW_MS  2000U
 #define STATUS_BLINK_X     20U   /* 40x40 heartbeat square, toggles every second */
-#define STATUS_BLINK_Y     280U
+#define STATUS_BLINK_Y     350U
 
 static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/screen */
+static uint32_t s_rx_hide_tick;  /* HAL_GetTick() value at which to blank STATUS_Y_RX */
+static uint8_t  s_rx_showing;    /* 1 while a received message is on screen, unexpired */
 
-/* Draws `text` right-padded to STATUS_VALUE_CHARS with spaces before
-   handing it to ST7796S_DrawString(), so this always repaints the exact
-   same pixel width regardless of how long the previous value was. */
-static void status_draw_value(uint16_t y, const char *text)
+/* Draws `text` right-padded to `chars` with spaces before handing it to
+   ST7796S_DrawString(), so this always repaints the exact same pixel width
+   regardless of how long the previous text there was - no stale leftover
+   characters. `chars` must be <= sizeof(padded)-1 (32); both current
+   callers (STATUS_VALUE_CHARS = 16, STATUS_RX_CHARS = 23) are well under
+   that, but bump the buffer too if a wider field is ever added. */
+static void status_draw_field(uint16_t x, uint16_t y, uint16_t chars, uint16_t color, const char *text)
 {
-  char padded[STATUS_VALUE_CHARS + 1U];
+  char padded[32 + 1U];
 
   /* GCC can't know at compile time that `text` (a plain const char *) fits
      the field, so -Wformat-truncation flags this as a possible overflow -
-     but snprintf() truncating a too-long value to STATUS_VALUE_CHARS is
-     exactly the intended, safe behaviour here, not a bug. */
+     but snprintf() truncating a too-long value to `chars` is exactly the
+     intended, safe behaviour here, not a bug. */
   #pragma GCC diagnostic push
   #pragma GCC diagnostic ignored "-Wformat-truncation"
-  snprintf(padded, sizeof(padded), "%-*s", (int)STATUS_VALUE_CHARS, text);
+  snprintf(padded, sizeof(padded), "%-*s", (int)chars, text);
   #pragma GCC diagnostic pop
-  ST7796S_DrawString(STATUS_VALUE_X, y, padded, ST7796S_CYAN, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(x, y, padded, color, ST7796S_BLACK, STATUS_FONT_SCALE);
+}
+
+/* Status-column value (STATUS_VALUE_X, STATUS_VALUE_CHARS wide, cyan) -
+   what every LINK/DHCP/IP/SERVER/TCP/UPTIME/FRAME row uses. */
+static void status_draw_value(uint16_t y, const char *text)
+{
+  status_draw_field(STATUS_VALUE_X, y, STATUS_VALUE_CHARS, ST7796S_CYAN, text);
 }
 
 /**
@@ -161,6 +177,7 @@ static void status_draw_static(const char *server_str)
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TCP,    "TCP:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_UPTIME, "UPTIME:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_RXLABEL, "LAST MSG:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
 
   status_draw_value(STATUS_Y_SERVER, server_str);
   {
@@ -168,6 +185,42 @@ static void status_draw_static(const char *server_str)
     snprintf(msg, sizeof(msg), "%lu MS", (unsigned long)tft_frame_ms);
     status_draw_value(STATUS_Y_FRAME, msg);
   }
+}
+
+/**
+  * @brief  Shows `text` on the LAST MSG: row (yellow, one line) for
+  *         STATUS_RX_SHOW_MS (2 s), then TFT_App_AlivePoll() blanks it again
+  *         on its own - see the expiry check at the top of that function.
+  *         Non-blocking: only draws once per call, no HAL_Delay(). Call from
+  *         main.c only when tcp_echo_client_take_last_rx() actually returned
+  *         new data - calling it with nothing new would just restart the
+  *         2 s timer on stale text.
+  *
+  *         A reply spanning several lines (the server can send more than
+  *         one) is shown as just its first line: this is one fixed-width
+  *         row like the rest of the screen, not a text box. Bytes outside
+  *         the small font's charset (letters/digits/`. : - /`only - see
+  *         st7796s.c) render as blank cells rather than garbage, so e.g. a
+  *         Cyrillic reply shows only its ASCII portions.
+  */
+void TFT_App_ShowReceived(const char *text)
+{
+  char line[STATUS_RX_CHARS + 1U];
+
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wformat-truncation"
+  snprintf(line, sizeof(line), "%s", text);
+  #pragma GCC diagnostic pop
+
+  for (char *p = line; *p != '\0'; p++)
+  {
+    if ((*p == '\r') || (*p == '\n')) { *p = '\0'; break; }
+  }
+
+  status_draw_field(STATUS_LABEL_X, STATUS_Y_RX, STATUS_RX_CHARS, ST7796S_YELLOW, line);
+
+  s_rx_hide_tick = HAL_GetTick() + STATUS_RX_SHOW_MS;
+  s_rx_showing = 1U;
 }
 
 /**
@@ -258,6 +311,17 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state)
   static uint32_t next_tick = 0;
   static uint8_t  phase = 0;
   const uint8_t   has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
+
+  /* LAST MSG: expiry - checked every call (not gated by the 1 Hz limiter
+     below), so the message disappears close to exactly STATUS_RX_SHOW_MS
+     after TFT_App_ShowReceived() drew it, not up to 1 s late. Only draws
+     when the timer JUST expired (s_rx_showing guards that), not on every
+     call after. */
+  if (s_rx_showing && ((int32_t)(HAL_GetTick() - s_rx_hide_tick) >= 0))
+  {
+    status_draw_field(STATUS_LABEL_X, STATUS_Y_RX, STATUS_RX_CHARS, ST7796S_YELLOW, "");
+    s_rx_showing = 0U;
+  }
 
   if ((int32_t)(HAL_GetTick() - next_tick) < 0)
   {
