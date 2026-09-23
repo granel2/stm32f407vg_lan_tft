@@ -90,6 +90,12 @@ void Debug_Print(const char *msg);
 #define TFT_RST_GPIO_Port GPIOD
 #define TFT_BL_Pin GPIO_PIN_7
 #define TFT_BL_GPIO_Port GPIOC
+/* Page-switch button, SV1.7 (PC6, silkscreened USART6_TX - unused). Wired
+   to GND on press; TFT_App_GPIO_Init() configures the internal pull-up
+   (GPIO_PULLUP), so no external pull-up resistor is needed - just a
+   switch/button between this pin and GND. */
+#define TFT_PAGEBTN_Pin GPIO_PIN_6
+#define TFT_PAGEBTN_GPIO_Port GPIOC
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
