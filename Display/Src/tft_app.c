@@ -7,6 +7,7 @@
   *          touching the Ethernet/lwIP code that lives there.
   ******************************************************************************
   */
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -143,6 +144,20 @@ typedef enum
 #define STATUS_Y_TCP       180U
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
+#define STATUS_Y_CHIPID    270U   /* unique 96-bit chip ID (OTP, read-only, never
+                                     changes) - label here, value spans this row
+                                     and the next (16 hex digits don't fit in one
+                                     STATUS_VALUE_CHARS-wide field) */
+#define STATUS_Y_CHIPID2   300U
+
+/* STM32F4's 96-bit factory-programmed unique device ID: three consecutive
+   32-bit words in OTP, memory-mapped read-only - no peripheral clock or
+   init needed, see RM0090 section 39.1 ("Unique device ID register"). */
+#define STM32_UID_BASE  0x1FFF7A10U
+static inline uint32_t stm32_uid_word(uint8_t index)
+{
+  return *(const volatile uint32_t *)(uintptr_t)(STM32_UID_BASE + ((uint32_t)index * 4U));
+}
 
 /* RECEIVED page: "LAST MSG:" label + up to STATUS_RX_MAX_ROWS wrapped rows.
    A whole page to itself now, so this can be much taller than when it had
@@ -302,12 +317,26 @@ static void draw_page_setup_static(void)
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TCP,    "TCP:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_UPTIME, "UPTIME:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_CHIPID, "CHIP ID:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
 
   status_draw_value(STATUS_Y_SERVER, s_server_str);
   {
     char msg[24];
     snprintf(msg, sizeof(msg), "%lu MS", (unsigned long)tft_frame_ms);
     status_draw_value(STATUS_Y_FRAME, msg);
+  }
+  {
+    /* 96-bit unique ID as hex, 24 digits - doesn't fit one
+       STATUS_VALUE_CHARS(16)-wide field, so split 16+8 across two rows.
+       Read-only OTP, set at the factory - never changes, so (like
+       SERVER:/FRAME: above) this is drawn once here, not refreshed by
+       TFT_App_AlivePoll(). */
+    char line1[17];
+    char line2[9];
+    snprintf(line1, sizeof(line1), "%08lX%08lX", (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1));
+    snprintf(line2, sizeof(line2), "%08lX", (unsigned long)stm32_uid_word(2));
+    status_draw_value(STATUS_Y_CHIPID,  line1);
+    status_draw_value(STATUS_Y_CHIPID2, line2);
   }
   /* LINK/DHCP/IP/TCP/UPTIME are left blank here - TFT_App_AlivePoll() fills
      them in on its very next call (forced immediately after a page switch,
@@ -437,6 +466,9 @@ void TFT_App_SmokeTest(const char *server_str)
      vanish entirely (ST7796S_FillRect() drops draws once y >= tft_height). */
   ST7796S_SetRotation(0U);
   snprintf(s_server_str, sizeof(s_server_str), "%s", server_str);
+  snprintf(msg, sizeof(msg), "[tft] chip UID = %08lX%08lX%08lX\r\n",
+           (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1), (unsigned long)stm32_uid_word(2));
+  Debug_Print(msg);
   s_page = TFT_PAGE_SETUP;
   draw_page_static(s_page);
   Debug_Print("[tft] smoke test done, status screen running\r\n");
