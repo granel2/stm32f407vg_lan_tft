@@ -72,6 +72,21 @@ void     ST7796S_DrawDigit7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
 void     ST7796S_DrawNumber7(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                              uint32_t value, uint8_t digits, uint16_t color, uint16_t bg);
 
+/* Small bitmap font: space, '.', ':', '-', '/', digits 0-9, uppercase A-Z.
+   Any other character is drawn as a blank (background-filled) cell rather
+   than garbage, so an unsupported byte in a string just leaves a gap.
+   `scale` is an integer pixel multiplier (1 = native 5x7 px). */
+void     ST7796S_DrawChar(uint16_t x, uint16_t y, char c,
+                          uint16_t color, uint16_t bg, uint8_t scale);
+/* One line of text, left to right, 1 px (x scale) gap between characters.
+   Returns the x position right after the last character (useful for
+   appending more text on the same line). */
+uint16_t ST7796S_DrawString(uint16_t x, uint16_t y, const char *s,
+                            uint16_t color, uint16_t bg, uint8_t scale);
+/* Advance in px for one character cell at the given scale (glyph + gap) -
+   for laying out fixed-width fields without hardcoding the "6" everywhere. */
+uint16_t ST7796S_CharPitch(uint8_t scale);
+
 #ifdef __cplusplus
 }
 #endif

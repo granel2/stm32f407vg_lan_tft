@@ -150,7 +150,6 @@ int main(void)
   while (1)
   {
     Test_Blink_LEDs();
-    TFT_App_AlivePoll();
 
     /* Drain all pending ETH RX frames. Called unconditionally: the internal
        do-while exits immediately when nothing is pending, so the cost is one
@@ -167,6 +166,14 @@ int main(void)
     /* Only talk to the server once we actually have an IP (DHCP-assigned). */
     {
       uint8_t has_ip = (netif_is_up(&gnetif) && !ip4_addr_isany_val(*netif_ip4_addr(&gnetif))) ? 1U : 0U;
+
+      /* Feed the TFT status screen the same state this block already needs
+         anyway - see tft_app.h for the ip_str/link_up/tcp_state contract.
+         TFT_App_AlivePoll() rate-limits itself to 1 Hz internally, so
+         calling it every loop iteration here is cheap. */
+      TFT_App_AlivePoll(has_ip ? ip4addr_ntoa(netif_ip4_addr(&gnetif)) : "---",
+                        netif_is_link_up(&gnetif) ? 1U : 0U,
+                        tcp_echo_client_state_char());
 
       if (has_ip)
       {

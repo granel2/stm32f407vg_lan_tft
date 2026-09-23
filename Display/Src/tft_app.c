@@ -8,6 +8,7 @@
   ******************************************************************************
   */
 #include <stdio.h>
+#include <string.h>
 
 #include "tft_app.h"
 #include "st7796s.h"
@@ -91,18 +92,72 @@ void TFT_App_SPI3_Init(void)
   }
 }
 
-/* Layout of the bring-up screen (portrait, 320x480). The test pattern's
-   bottom-right quarter is a plain grey block - the live counters go there. */
-#define TFT_CNT_X       166U   /* left edge of the 5-digit counters */
-#define TFT_CNT_DIGIT_W  24U
-#define TFT_CNT_DIGIT_H  40U
-#define TFT_UPTIME_Y    300U   /* seconds since boot */
-#define TFT_FRAME_MS_Y  360U   /* measured full-screen fill time, ms */
-#define TFT_BLINK_X     170U   /* 40x40 square toggling every second (= pattern's red square) */
-#define TFT_BLINK_Y     250U
-#define TFT_GREY        ST7796S_RGB(64, 64, 64)
+/* Layout of the operational status screen (portrait, 320x480), shown after
+   the one-shot bring-up test below finishes. Two-column form: a label at
+   STATUS_LABEL_X (drawn once, never changes) and a value at STATUS_VALUE_X
+   (redrawn by TFT_App_AlivePoll() every second). Font scale 2 -> each
+   character cell is ST7796S_CharPitch(2) = 12 px wide, 14 px tall. */
+#define STATUS_FONT_SCALE  2U
+#define STATUS_LABEL_X     20U
+#define STATUS_VALUE_X     (STATUS_LABEL_X + 8U * 12U)   /* 8 label-char columns */
+#define STATUS_VALUE_CHARS 16U    /* fixed width so a shorter new value fully
+                                     overwrites a longer old one - no stale
+                                     leftover characters from the previous
+                                     draw (see status_draw_value()) */
+#define STATUS_Y_TITLE     20U
+#define STATUS_Y_LINK      60U
+#define STATUS_Y_DHCP      90U
+#define STATUS_Y_IP        120U
+#define STATUS_Y_TCP       150U
+#define STATUS_Y_UPTIME    190U
+#define STATUS_Y_FRAME     220U
+#define STATUS_BLINK_X     20U   /* 40x40 heartbeat square, toggles every second */
+#define STATUS_BLINK_Y     260U
 
 static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/screen */
+
+/* Draws `text` right-padded to STATUS_VALUE_CHARS with spaces before
+   handing it to ST7796S_DrawString(), so this always repaints the exact
+   same pixel width regardless of how long the previous value was. */
+static void status_draw_value(uint16_t y, const char *text)
+{
+  char padded[STATUS_VALUE_CHARS + 1U];
+
+  /* GCC can't know at compile time that `text` (a plain const char *) fits
+     the field, so -Wformat-truncation flags this as a possible overflow -
+     but snprintf() truncating a too-long value to STATUS_VALUE_CHARS is
+     exactly the intended, safe behaviour here, not a bug. */
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wformat-truncation"
+  snprintf(padded, sizeof(padded), "%-*s", (int)STATUS_VALUE_CHARS, text);
+  #pragma GCC diagnostic pop
+  ST7796S_DrawString(STATUS_VALUE_X, y, padded, ST7796S_CYAN, ST7796S_BLACK, STATUS_FONT_SCALE);
+}
+
+/**
+  * @brief  Draws the status screen's static parts once: title, all labels,
+  *         and the one-shot frame-fill-time measurement. The values next to
+  *         LINK/DHCP/IP/TCP/UPTIME are left blank here - TFT_App_AlivePoll()
+  *         fills them in on its first call and every second after.
+  */
+static void status_draw_static(void)
+{
+  ST7796S_FillScreen(ST7796S_BLACK);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TITLE, "STM32F407 STATUS", ST7796S_YELLOW, ST7796S_BLACK, STATUS_FONT_SCALE);
+
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_LINK,   "LINK:",   ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_DHCP,   "DHCP:",   ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_IP,     "IP:",     ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_TCP,    "TCP:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_UPTIME, "UPTIME:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+
+  {
+    char msg[24];
+    snprintf(msg, sizeof(msg), "%lu MS", (unsigned long)tft_frame_ms);
+    status_draw_value(STATUS_Y_FRAME, msg);
+  }
+}
 
 /**
   * @brief  One-shot TFT hardware check at boot. Everything here is blocking
@@ -110,7 +165,8 @@ static uint32_t tft_frame_ms;  /* last measured full-screen fill, for the log/sc
   *         UART : "[tft] id ..." verdict, full-frame fill time in ms
   *         panel: solid red -> green -> blue -> white (0.4 s each), then the
   *                test pattern rotated through all 4 orientations (0.8 s
-  *                each), finally portrait with two counters bottom-right.
+  *                each), finally the LINK/DHCP/IP/TCP/UPTIME status screen
+  *                (see status_draw_static() and TFT_App_AlivePoll()).
   */
 void TFT_App_SmokeTest(void)
 {
@@ -158,24 +214,35 @@ void TFT_App_SmokeTest(void)
     HAL_Delay(800);
   }
 
-  /* 4. Final screen: portrait test pattern + live counters (TFT_App_AlivePoll) */
-  ST7796S_SetRotation(0U);
-  ST7796S_DrawTestPattern();
-  ST7796S_DrawNumber7(TFT_CNT_X, TFT_FRAME_MS_Y, TFT_CNT_DIGIT_W, TFT_CNT_DIGIT_H,
-                      tft_frame_ms, 5U, ST7796S_CYAN, TFT_GREY);
-  Debug_Print("[tft] smoke test done, live counters running\r\n");
+  /* 4. Set up the operational status screen (labels + one-shot frame-time
+     value). TFT_App_AlivePoll() fills in LINK/DHCP/IP/TCP/UPTIME and keeps
+     them current from here on - see main.c's while(1) loop. */
+  status_draw_static();
+  Debug_Print("[tft] smoke test done, status screen running\r\n");
 }
 
 /**
-  * @brief  Proof the link stays alive after boot: once a second redraw the
-  *         uptime (seconds, cyan digits) and toggle a red/green square in the
-  *         grey block. ~2.5 kB per update = ~2 ms at 10 MHz, so it never
-  *         stalls the Ethernet main loop. Call every main-loop iteration.
+  * @brief  Proof the link stays alive after boot, and the actual network
+  *         status screen: once a second, redraw LINK/DHCP/IP/TCP/UPTIME and
+  *         toggle a heartbeat square. ~3 kB per update at STATUS_FONT_SCALE
+  *         = a few ms at 10 MHz, so it never stalls the Ethernet main loop.
+  *         Call every main-loop iteration; internally rate-limited to 1 Hz.
+  *
+  * @param  ip_str    Current IPv4 address as text (e.g. "192.168.1.42"), or
+  *                    the literal string "---" if none has been assigned
+  *                    yet (link down, or DHCP still in progress).
+  * @param  link_up    Non-zero if the PHY reports link up.
+  * @param  tcp_state  tcp_echo_client_state_char() passthrough: 'I' = idle
+  *                    (about to retry), 'C' = connecting, 'E' = connected.
+  *                    Any other value is shown as IDLE, so a future state
+  *                    code added to tcp_echo_client.c fails safe here
+  *                    instead of printing a raw letter.
   */
-void TFT_App_AlivePoll(void)
+void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state)
 {
   static uint32_t next_tick = 0;
   static uint8_t  phase = 0;
+  const uint8_t   has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
 
   if ((int32_t)(HAL_GetTick() - next_tick) < 0)
   {
@@ -184,7 +251,16 @@ void TFT_App_AlivePoll(void)
   next_tick = HAL_GetTick() + 1000U;
   phase ^= 1U;
 
-  ST7796S_FillRect(TFT_BLINK_X, TFT_BLINK_Y, 40U, 40U, phase ? ST7796S_GREEN : ST7796S_RED);
-  ST7796S_DrawNumber7(TFT_CNT_X, TFT_UPTIME_Y, TFT_CNT_DIGIT_W, TFT_CNT_DIGIT_H,
-                      HAL_GetTick() / 1000U, 5U, ST7796S_CYAN, TFT_GREY);
+  ST7796S_FillRect(STATUS_BLINK_X, STATUS_BLINK_Y, 40U, 40U, phase ? ST7796S_GREEN : ST7796S_RED);
+
+  status_draw_value(STATUS_Y_LINK, link_up ? "UP" : "DOWN");
+  status_draw_value(STATUS_Y_DHCP, !link_up ? "---" : has_ip ? "OK" : "WAITING");
+  status_draw_value(STATUS_Y_IP,   ip_str);
+  status_draw_value(STATUS_Y_TCP,  (tcp_state == 'C') ? "CONNECTING" :
+                                    (tcp_state == 'E') ? "CONNECTED"  : "IDLE");
+  {
+    char msg[24];
+    snprintf(msg, sizeof(msg), "%lu S", (unsigned long)(HAL_GetTick() / 1000U));
+    status_draw_value(STATUS_Y_UPTIME, msg);
+  }
 }

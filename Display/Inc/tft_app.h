@@ -11,12 +11,14 @@
   *   tft_app.c/.h   - THIS module: owns the SPI3 handle, decides what goes
   *                     on screen and when. Board- and app-specific; this is
   *                     the file to extend for new screens/widgets.
-  *   main.c         - calls TFT_App_SPI3_Init() + TFT_App_SmokeTest() once
-  *                     at boot (before MX_LWIP_Init(), see main.c comment),
-  *                     then TFT_App_AlivePoll() every main-loop iteration.
+  *   main.c         - calls TFT_App_GPIO_Init() + TFT_App_SPI3_Init() +
+  *                     TFT_App_SmokeTest() once at boot (before
+  *                     MX_LWIP_Init(), see main.c comment), then
+  *                     TFT_App_AlivePoll() every main-loop iteration.
   *
-  * Wiring / jumpers: see hardware/TFT_WIRING.md and hardware/TFT_3.5_board.md.
-  * Pin assignment (SPI3 + CS/DC/RST/BL): see main.h "Private defines".
+  * Wiring / jumpers: see Display/docs/TFT_WIRING.md and
+  * Display/docs/TFT_3.5_board.md. Pin assignment (SPI3 + CS/DC/RST/BL): see
+  * main.h "Private defines".
   ******************************************************************************
   */
 #ifndef TFT_APP_H
@@ -34,10 +36,11 @@ extern "C" {
 extern SPI_HandleTypeDef hspi3;
 
 /**
-  * @brief  Configure the TFT control GPIOs: CS (PA15, push-pull, idle high),
-  *         DC/RST/BL (PB6/PB7/PB8, push-pull, RST idle high, DC/BL idle low).
-  *         Call once, right after MX_GPIO_Init() and before
-  *         TFT_App_SPI3_Init()/TFT_App_SmokeTest().
+  * @brief  Configure the TFT control GPIOs: CS (PA15), DC/RST/BL
+  *         (PD6/PD5/PC7 - see main.h for the current pin assignment),
+  *         all push-pull, RST idle high, DC/BL idle low. Call once, right
+  *         after MX_GPIO_Init() and before TFT_App_SPI3_Init()/
+  *         TFT_App_SmokeTest().
   */
 void TFT_App_GPIO_Init(void);
 
@@ -51,18 +54,20 @@ void TFT_App_SPI3_Init(void);
 /**
   * @brief  One-shot boot-time hardware check (~7 s, blocking): controller ID
   *         readback to the debug UART, R/G/B/W fill with timing, test
-  *         pattern in all 4 rotations, then leaves the live counters running
-  *         (see TFT_App_AlivePoll()). Call once, before lwIP/Ethernet bring
-  *         up so its blocking delays can't stall DHCP/RX.
+  *         pattern in all 4 rotations, then switches to the operational
+  *         status screen (see TFT_App_AlivePoll()). Call once, before
+  *         lwIP/Ethernet bring-up so its blocking delays can't stall DHCP/RX.
   */
 void TFT_App_SmokeTest(void);
 
 /**
-  * @brief  Non-blocking: redraws the uptime counter and toggles a heartbeat
-  *         square once a second, returns immediately the rest of the time.
-  *         Safe to call every main-loop iteration.
+  * @brief  Non-blocking: once a second, redraws the LINK/DHCP/IP/TCP/UPTIME
+  *         status screen and toggles a heartbeat square; returns immediately
+  *         the rest of the time. Safe (and required) to call every
+  *         main-loop iteration - see tft_app.c for the parameter contract
+  *         (in particular, ip_str == "---" means "no address yet").
   */
-void TFT_App_AlivePoll(void);
+void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state);
 
 #ifdef __cplusplus
 }
