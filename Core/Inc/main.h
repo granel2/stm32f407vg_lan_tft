@@ -75,18 +75,21 @@ void Debug_Print(const char *msg);
 /* USER CODE BEGIN Private defines */
 /* 3.5" ST7796S TFT on SPI3 (PC10 SCK / PC11 MISO / PC12 MOSI, header SV4).
    CS is a plain GPIO on SV4; DC/RST/BL are plain GPIOs grouped on three
-   adjacent SV1 pins (3/4/5) - see Display/README.md and
-   Display/docs/TFT_WIRING.md. PA4/PB9 are silkscreened DAC_OUT1/RPM2 on
-   this board (hardware/BOARD.md) but unused by any peripheral here, so
-   they're free to repurpose as plain outputs - same precedent as PB8/BL. */
+   adjacent SV1 pins (8/9/10) - see Display/README.md and
+   Display/docs/TFT_WIRING.md. PC7/PD5/PD6 are silkscreened USART6/USART2
+   TX-RX on this board (hardware/BOARD.md) but neither UART is used by
+   this firmware, so they're free to repurpose as plain outputs - same
+   precedent as PB8/BL. PC7 needs its GPIOC clock enabled explicitly
+   (TFT_App_GPIO_Init() does this) since MX_GPIO_Init() doesn't otherwise
+   turn it on before this runs. */
 #define TFT_CS_Pin GPIO_PIN_15
 #define TFT_CS_GPIO_Port GPIOA
-#define TFT_DC_Pin GPIO_PIN_4
-#define TFT_DC_GPIO_Port GPIOA
-#define TFT_RST_Pin GPIO_PIN_9
-#define TFT_RST_GPIO_Port GPIOB
-#define TFT_BL_Pin GPIO_PIN_8
-#define TFT_BL_GPIO_Port GPIOB
+#define TFT_DC_Pin GPIO_PIN_6
+#define TFT_DC_GPIO_Port GPIOD
+#define TFT_RST_Pin GPIO_PIN_5
+#define TFT_RST_GPIO_Port GPIOD
+#define TFT_BL_Pin GPIO_PIN_7
+#define TFT_BL_GPIO_Port GPIOC
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

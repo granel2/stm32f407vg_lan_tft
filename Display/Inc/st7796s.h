@@ -11,9 +11,9 @@
   *   GND   -> GND             (SV4.6)
   *   VCC   -> +5V             (SV4.5)   module must have its own 3.3 V LDO;
   *                                        otherwise +3V3 from SV2.1
-  *   BL    -> PB8             (SV1.3)   high = backlight on
-  *   RST   -> PB9             (SV1.4)
-  *   DC    -> PA4             (SV1.5)
+  *   BL    -> PC7             (SV1.8)   high = backlight on
+  *   RST   -> PD5             (SV1.9)
+  *   DC    -> PD6             (SV1.10)
   * All of CS/DC/RST/BL are plain push-pull GPIOs, chosen so the whole panel
   * fits on just two headers (SV4 + SV1) instead of three - see
   * Display/README.md and Display/docs/TFT_WIRING.md.

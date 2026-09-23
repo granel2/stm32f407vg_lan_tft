@@ -25,10 +25,22 @@ SPI_HandleTypeDef hspi3;
   *         unaffected by repurposing it. Written per-pin (not grouped by
   *         port) since CS/DC/RST/BL don't all share one GPIO port - see the
   *         pin defines in main.h.
+  *
+  *         Enables GPIOC's clock itself: MX_GPIO_Init() only turns on
+  *         A/B/D/H (nothing here used C before BL moved to PC7), and this
+  *         must run before any register access to that port, including the
+  *         WritePin calls below. GPIOA/B/D are already on by the time this
+  *         runs (called right after MX_GPIO_Init()), but enabling them again
+  *         is harmless - kept here too so this module stays self-contained
+  *         and doesn't depend on main.c's enable order.
   */
 void TFT_App_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(TFT_DC_GPIO_Port, TFT_DC_Pin, GPIO_PIN_RESET);
