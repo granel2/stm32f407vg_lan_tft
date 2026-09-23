@@ -12,13 +12,13 @@
 #include <stdint.h>
 #include "lwip/netif.h"
 
-/* TODO: point this at your actual test server (e.g. `nc -lk 5000` on a PC in
-   the same LAN). Until you set a real address, the client will just keep
-   retrying the connection every few seconds (harmless, visible over UART). */
+/* Real test server on the LAN (was a placeholder, 10.0.1.18 - never actually
+   listened on anything). Run e.g. `nc -lk 5000` on 10.0.1.16 to see this
+   client's counter messages and have it echo something back. */
 #define TCP_ECHO_SERVER_IP0   10
 #define TCP_ECHO_SERVER_IP1   0
 #define TCP_ECHO_SERVER_IP2   1
-#define TCP_ECHO_SERVER_IP3   18
+#define TCP_ECHO_SERVER_IP3   16
 #define TCP_ECHO_SERVER_PORT  5000
 
 /* Call once the netif is up and has a valid IP (see main.c main loop). */
