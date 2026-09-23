@@ -17,5 +17,8 @@
   "cmake.preferredGenerators": [
     "Ninja"
   ],
-  "cmake.configureOnOpen": true
+  "cmake.configureOnOpen": true,
+  "clangd.arguments": [
+    "--query-driver=C:/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin/arm-none-eabi-*,C:/Users/svgra/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/*/bin/arm-none-eabi-*"
+  ]
 }

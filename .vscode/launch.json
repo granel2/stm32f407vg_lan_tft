@@ -5,6 +5,7 @@
       "name": "Cortex Debug (ST-Link)",
       "type": "cortex-debug",
       "request": "launch",
+      "preLaunchTask": "CMake: Build",
       "servertype": "openocd",
       "executable": "${workspaceFolder}/build/stm32f407vg_lan_tft.elf",
       "cwd": "${workspaceFolder}",

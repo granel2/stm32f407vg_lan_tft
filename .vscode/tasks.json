@@ -68,6 +68,15 @@
         "cwd": "${workspaceFolder}"
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Build + Flash",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "CMake: Build",
+        "Flash STM32F407VG"
+      ],
+      "problemMatcher": []
     }
   ]
 }
