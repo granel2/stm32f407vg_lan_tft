@@ -80,6 +80,16 @@ DeviceConfig *device_config_get(void);
   */
 uint8_t device_config_save(void);
 
+/**
+  * @brief  Increments on every successful device_config_save() (starts at 0
+  *         after boot). main.c polls it to notice a save from *either*
+  *         config path (config_server.c or config_http.c) and react - redraw
+  *         the SETUP page's SERVER:/NAME:, reconnect tcp_echo_client to a
+  *         new server - without either config module knowing about the
+  *         display or the TCP client.
+  */
+uint32_t device_config_revision(void);
+
 #ifdef __cplusplus
 }
 #endif

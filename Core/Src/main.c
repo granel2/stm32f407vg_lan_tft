@@ -35,6 +35,7 @@
 #include "tft_app.h"
 #include "device_config.h"
 #include "config_server.h"
+#include "config_http.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -159,6 +160,7 @@ int main(void)
   MX_LWIP_Init();
   tcp_echo_client_init();
   config_server_init();
+  config_http_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -166,6 +168,44 @@ int main(void)
   while (1)
   {
     Test_Blink_LEDs();
+    config_http_poll();
+
+    /* A config save (from the web page or the port-7000 text protocol) bumps
+       device_config_revision(). React here, so neither config module needs
+       to know about the display or the TCP client: refresh SERVER:/NAME: on
+       the SETUP page, and if the server address itself changed, drop the
+       current connection and reconnect to the new one right away. IP-mode
+       changes are not handled here - they need a reboot (MX_LWIP_Init()). */
+    {
+      static uint32_t seen_rev = 0U;
+      static uint8_t  seen_ip[4];
+      static uint16_t seen_port;
+      static uint8_t  seen_init = 0U;
+      const DeviceConfig *cfg = device_config_get();
+
+      if (seen_init == 0U)
+      {
+        memcpy(seen_ip, cfg->server_ip, sizeof(seen_ip));
+        seen_port = cfg->server_port;
+        seen_init = 1U;
+      }
+      if (device_config_revision() != seen_rev)
+      {
+        char server_str[24];
+
+        seen_rev = device_config_revision();
+        snprintf(server_str, sizeof(server_str), "%u.%u.%u.%u:%u",
+                 cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3], cfg->server_port);
+        TFT_App_UpdateInfo(server_str, cfg->name);
+
+        if ((memcmp(seen_ip, cfg->server_ip, sizeof(seen_ip)) != 0) || (seen_port != cfg->server_port))
+        {
+          memcpy(seen_ip, cfg->server_ip, sizeof(seen_ip));
+          seen_port = cfg->server_port;
+          tcp_echo_client_restart();
+        }
+      }
+    }
 
     /* Drain all pending ETH RX frames. Called unconditionally: the internal
        do-while exits immediately when nothing is pending, so the cost is one
@@ -557,6 +597,7 @@ static void MX_LWIP_Init(void)
     IP4_ADDR(&gw, 0, 0, 0, 0);
   }
 
+  ethernetif_set_use_dhcp((uint8_t)((cfg->use_static_ip != 0U) ? 0U : 1U));
   netif_add(&gnetif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &ethernet_input);
   g_eth_debug_marker = 52;
   netif_set_default(&gnetif);

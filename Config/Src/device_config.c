@@ -35,6 +35,7 @@
 #define DEFAULT_NAME        "stm32f407"
 
 static DeviceConfig s_config;
+static uint32_t     s_revision;
 
 /* Standalone reflected CRC-32 (poly 0xEDB88320, init/final XOR
    0xFFFFFFFF) - identical algorithm to Display/Src/tft_app.c's
@@ -141,5 +142,14 @@ uint8_t device_config_save(void)
   }
 
   HAL_FLASH_Lock();
+  if (status == HAL_OK)
+  {
+    s_revision++;
+  }
   return (status == HAL_OK) ? 1U : 0U;
+}
+
+uint32_t device_config_revision(void)
+{
+  return s_revision;
 }

@@ -36,6 +36,12 @@ void ethernetif_poll_link(struct netif *netif);
    does to the ETH peripheral. */
 void ethernetif_reset(struct netif *netif);
 
+/* 1 (default) = DHCP, 0 = static IP. Set once by MX_LWIP_Init() from the
+   persisted config; ethernetif_reset() and the link-up path of
+   ethernetif_poll_link() only (re)start DHCP when this is 1, so a
+   static-IP module keeps its fixed address across a cable replug/ETH reset. */
+void ethernetif_set_use_dhcp(uint8_t use_dhcp);
+
 /* TEMPORARY bring-up breadcrumb, see ethernetif.c. */
 extern volatile uint32_t g_eth_debug_marker;
 

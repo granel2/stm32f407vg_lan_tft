@@ -78,6 +78,7 @@ set(PROJECT_SOURCES
   Display/Src/tft_app.c
   Config/Src/device_config.c
   Config/Src/config_server.c
+  Config/Src/config_http.c
   Middlewares/Third_Party/LwIP/src/core/init.c
   Middlewares/Third_Party/LwIP/src/core/def.c
   Middlewares/Third_Party/LwIP/src/core/dns.c

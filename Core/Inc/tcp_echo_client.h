@@ -47,4 +47,13 @@ uint16_t tcp_echo_client_sndqueuelen(void);
    fed from the same received data, neither affects the other). */
 uint16_t tcp_echo_client_take_last_rx(char *buf, uint16_t buf_size);
 
+/* Drop the current connection (if any) and reconnect using whatever server
+   address device_config.h holds now - main.c calls this when a saved
+   config changed server_ip/server_port. Idle: retries right away instead
+   of waiting out RECONNECT_INTERVAL_MS. Mid-connect (SYN sent): left alone,
+   the timeout/retry path already re-reads the address on its next attempt
+   - aborting there would count as a failed connect toward the ETH-reset
+   escalation for no real reason. */
+void tcp_echo_client_restart(void);
+
 #endif /* __TCP_ECHO_CLIENT_H__ */

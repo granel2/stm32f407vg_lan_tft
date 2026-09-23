@@ -334,6 +334,24 @@ uint16_t tcp_echo_client_take_last_rx(char *buf, uint16_t buf_size)
   return n;
 }
 
+void tcp_echo_client_restart(void)
+{
+  if ((s_state == ECHO_STATE_CONNECTED) && (s_pcb != NULL))
+  {
+    rx_push("[tcp_echo] server address changed, reconnecting\r\n", 49);
+    /* tcp_abort() synchronously calls on_err(), which does reset_to_idle();
+       s_state is CONNECTED there, so it doesn't count toward the ETH-reset
+       failure escalation. Then retry immediately rather than after the
+       usual RECONNECT_INTERVAL_MS. */
+    tcp_abort(s_pcb);
+    s_next_action_tick = HAL_GetTick();
+  }
+  else if (s_state == ECHO_STATE_IDLE)
+  {
+    s_next_action_tick = HAL_GetTick();
+  }
+}
+
 void tcp_echo_client_init(void)
 {
   s_pcb          = NULL;

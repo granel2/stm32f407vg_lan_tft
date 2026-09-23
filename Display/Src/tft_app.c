@@ -441,6 +441,18 @@ void TFT_App_ShowReceived(const char *text)
   }
 }
 
+void TFT_App_UpdateInfo(const char *server_str, const char *device_name)
+{
+  snprintf(s_server_str, sizeof(s_server_str), "%s", server_str);
+  snprintf(s_device_name, sizeof(s_device_name), "%s", device_name);
+
+  if (s_page == TFT_PAGE_SETUP)
+  {
+    status_draw_value(STATUS_Y_SERVER, s_server_str);
+    status_draw_value(STATUS_Y_NAME,   s_device_name);
+  }
+}
+
 /**
   * @brief  One-shot TFT hardware check at boot. Everything here is blocking
   *         (~7 s) - runs before lwIP on purpose. What to look for:

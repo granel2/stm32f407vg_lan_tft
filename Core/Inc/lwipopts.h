@@ -30,7 +30,13 @@
 
 #define MEMP_NUM_PBUF           10
 #define MEMP_NUM_UDP_PCB        4
-#define MEMP_NUM_TCP_PCB        4
+/* Active TCP connections: tcp_echo_client (1) + a config_server.c session
+   (1) + browser connections to config_http.c - a browser typically opens
+   2-3 in parallel (page + favicon + a speculative pre-connect), and each
+   closed one then sits in TIME_WAIT for a while. 4 was enough before the
+   web page existed; 8 leaves headroom (a pcb is ~150 B of RAM). */
+#define MEMP_NUM_TCP_PCB        8
+/* Listening sockets: config_server.c (port 7000) + config_http.c (port 80). */
 #define MEMP_NUM_TCP_PCB_LISTEN 2
 #define MEMP_NUM_TCP_SEG        TCP_SND_QUEUELEN
 #define MEMP_NUM_SYS_TIMEOUT    10

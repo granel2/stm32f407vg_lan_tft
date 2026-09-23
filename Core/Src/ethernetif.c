@@ -14,6 +14,8 @@
 #include "lwip/dhcp.h"
 #include "lwip/mem.h"
 #include "lwip/memp.h"
+#include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"
 #include "netif/ethernet.h"
 #include "netif/etharp.h"
 #include "lwip/stats.h"
@@ -585,8 +587,39 @@ static struct pbuf *low_level_input(struct netif *netif)
   return p;
 }
 
+/* The heap/pool wipe in ethernetif_reset() hands every TCP_PCB/TCP_SEG slot
+   back to the free lists - but lwIP's own tcp_active_pcbs/tcp_tw_pcbs/
+   tcp_bound_pcbs lists would still link those same slots. The next
+   tcp_alloc() then returns a pcb that is *already* on a list, and
+   re-registering it closes the list into a ring: tcp_input()/tcp_slowtmr()
+   then loop forever (observed: two port-80 TIME_WAIT pcbs pointing at each
+   other after a web-config save, CPU spinning in tcp_input's TIME_WAIT
+   scan). So drop every non-listening pcb properly first. tcp_abort() calls
+   each pcb's err callback, so tcp_echo_client/config_server clear their
+   own pointers exactly as on any other connection loss. */
+static uint8_t s_use_dhcp = 1U;
+
+void ethernetif_set_use_dhcp(uint8_t use_dhcp)
+{
+  s_use_dhcp = use_dhcp;
+}
+
+static void tcp_abort_all_for_reset(void)
+{
+  while (tcp_active_pcbs != NULL) { tcp_abort(tcp_active_pcbs); }
+  while (tcp_tw_pcbs != NULL)     { tcp_abort(tcp_tw_pcbs); }
+  while (tcp_bound_pcbs != NULL)  { tcp_abort(tcp_bound_pcbs); }
+}
+
 void ethernetif_reset(struct netif *netif)
 {
+  /* tcp_abort_all_for_reset() below runs tcp_echo_client's on_err, which can
+     itself decide to call ethernetif_reset() ("too many failed connects") -
+     ignore that nested call, this one is already doing the reset. */
+  static uint8_t in_reset;
+  if (in_reset != 0U) { return; }
+  in_reset = 1U;
+
   eth_debug("[eth] resetting ETH peripheral (no traffic, CPU alive)\r\n");
 
   HAL_ETH_Stop_IT(&EthHandle);
@@ -654,8 +687,17 @@ void ethernetif_reset(struct netif *netif)
      about to wipe. */
   dhcp_stop(netif);
   dhcp_cleanup(netif);
+  tcp_abort_all_for_reset();
   mem_init();
-  memp_init();
+  /* Every pool except TCP_PCB_LISTEN: the listening pcbs (config_server
+     port 7000, config_http port 80) own no heap/seg memory, are allocated
+     once at boot and never again - wiping their pool would make them
+     "free" while still listening. Keeping them means both configurators
+     keep working across an ETH reset without re-initialising. */
+  for (u16_t i = 0; i < (u16_t)MEMP_MAX; i++)
+  {
+    if (i != (u16_t)MEMP_TCP_PCB_LISTEN) { memp_init_pool(memp_pools[i]); }
+  }
   /* mem_init() only resets the real allocator's free list - it does NOT
      touch lwip_stats.mem.used (that's a separate bookkeeping counter, only
      ever incremented/decremented by individual malloc/free calls). Left
@@ -674,10 +716,11 @@ void ethernetif_reset(struct netif *netif)
      module would keep reusing the old IP forever with no active lease
      renewal after a reset. Safe to call unconditionally: dhcp_start() is
      a no-op-safe re-arm, not a duplicate-start error. */
-  if (netif_is_link_up(netif))
+  if (netif_is_link_up(netif) && (s_use_dhcp != 0U))
   {
     dhcp_start(netif);
   }
+  in_reset = 0U;
 }
 
 void ethernetif_input(struct netif *netif)
@@ -909,7 +952,7 @@ void ethernetif_poll_link(struct netif *netif)
       HAL_ETH_Start_IT(&EthHandle);
       netif_set_up(netif);
       netif_set_link_up(netif);
-      dhcp_start(netif);
+      if (s_use_dhcp != 0U) { dhcp_start(netif); }
     }
   }
 }

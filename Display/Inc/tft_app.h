@@ -70,6 +70,15 @@ void TFT_App_SPI3_Init(void);
 void TFT_App_SmokeTest(const char *server_str, const char *device_name);
 
 /**
+  * @brief  Replace the SETUP page's SERVER:/NAME: values after boot (e.g.
+  *         after a save from the web config page). Redraws them right away
+  *         if SETUP is the page showing, otherwise just stores them for the
+  *         next time it is. Same plain-string contract as
+  *         TFT_App_SmokeTest().
+  */
+void TFT_App_UpdateInfo(const char *server_str, const char *device_name);
+
+/**
   * @brief  Non-blocking: once a second, redraws the LINK/DHCP/IP/TCP/UPTIME
   *         status screen and toggles a heartbeat square; returns immediately
   *         the rest of the time. Safe (and required) to call every
