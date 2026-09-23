@@ -35,9 +35,14 @@ Display/Src/tft_app.c        — SERVER:/NAME: на странице SETUP ст�
 
 ## Протокол (TCP, порт 7000, построчно, `\r\n`)
 
-Подключиться можно чем угодно — `nc <IP модуля> 7000`, PowerShell/Python-скрипт, тот же
-принцип, что и с тестовым TCP-сервером (`nc -lk 5000`) для `tcp_echo_client`. IP модуля
-виден на экране (страница SETUP, `IP:`).
+Подключиться можно чем угодно — `nc <IP модуля> 7000`, PuTTY (Connection type: **Raw**,
+Host = IP модуля, Port = 7000), или (если ни того, ни другого нет под рукой)
+[`scripts/config-client.ps1`](../scripts/config-client.ps1) — интерактивный клиент на
+чистом PowerShell без сторонних утилит:
+```
+powershell -ExecutionPolicy Bypass -File scripts/config-client.ps1 <IP модуля>
+```
+IP модуля виден на экране (страница SETUP, `IP:`).
 
 | Команда | Действие |
 |---|---|
