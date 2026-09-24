@@ -38,6 +38,7 @@
 #include "config_http.h"
 #include "diag_cpu.h"
 #include "clock.h"
+#include "can_bus.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -164,6 +165,7 @@ int main(void)
   config_server_init();
   config_http_init();
   clock_init();     /* Clock/: NTP time for the CLOCK page, see clock_config.h */
+  (void)can_bus_init(); /* CAN/: CAN1 on J3, receive + log, see can_config.h */
   diag_cpu_init();  /* Diag/: main-loop load stats, see diag_config.h */
   /* USER CODE END 2 */
 
@@ -229,6 +231,8 @@ int main(void)
     diag_cpu_begin(DIAG_SECT_LWIP);
     sys_check_timeouts();
     diag_cpu_end(DIAG_SECT_LWIP);
+
+    can_bus_poll();  /* CAN1 RX queue -> log/handler, bus state */
 
     /* DHCP fallback: in DHCP mode, if the link is up but no DHCP server has
        answered within DHCP_FALLBACK_MS, take the configured static IP ("IP

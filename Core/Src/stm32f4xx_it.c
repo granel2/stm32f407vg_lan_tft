@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "stm32f4xx_hal_eth.h"
 #include "tft_app.h"
+#include "can_bus.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -250,6 +251,15 @@ void ETH_IRQHandler(void)
 void DMA1_Stream5_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(&hdma_spi3_tx);
+}
+
+/**
+  * @brief CAN1 FIFO0: frame received / FIFO overrun (CAN/Src/can_bus.c).
+  * Hand-added like ETH above - CAN is not in the .ioc.
+  */
+void CAN1_RX0_IRQHandler(void)
+{
+  can_bus_rx0_irq();
 }
 
 /* USER CODE END 1 */

@@ -85,6 +85,7 @@ set(PROJECT_SOURCES
   Diag/Src/diag_cpu.c
   Clock/Src/clock.c
   Clock/Src/clock_page.c
+  CAN/Src/can_bus.c
   Middlewares/Third_Party/LwIP/src/core/init.c
   Middlewares/Third_Party/LwIP/src/core/def.c
   Middlewares/Third_Party/LwIP/src/core/dns.c
@@ -121,6 +122,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/Config/Inc
   ${CMAKE_SOURCE_DIR}/Diag/Inc
   ${CMAKE_SOURCE_DIR}/Clock/Inc
+  ${CMAKE_SOURCE_DIR}/CAN/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy
   ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include
