@@ -228,8 +228,13 @@ typedef enum
   FIELD_STATIC_IP,
   FIELD_NETMASK,
   FIELD_GATEWAY,
+  FIELD_BL_LEVEL,      /* backlight fields: applied at once on Save, no restart */
+  FIELD_BL_DIM_LEVEL,
+  FIELD_BL_DIM_MIN,
   FIELD_COUNT
 } FieldId;
+
+#define FIELD_IS_LIVE(f)  ((f) >= FIELD_BL_LEVEL)
 
 typedef struct
 {
@@ -247,7 +252,21 @@ static const FieldDesc k_fields[FIELD_COUNT] =
   [FIELD_STATIC_IP]   = { "ip",    "Статический IP / IP по умолчанию", "192.168.1.100" },
   [FIELD_NETMASK]     = { "mask",  "Маска подсети",                 "255.255.255.0" },
   [FIELD_GATEWAY]     = { "gw",    "Шлюз",                          "192.168.1.1" },
+  [FIELD_BL_LEVEL]     = { "bl",    "Яркость экрана, %",             "100" },
+  [FIELD_BL_DIM_LEVEL] = { "bldim", "Яркость в покое, %",            "20" },
+  [FIELD_BL_DIM_MIN]   = { "blmin", "Приглушать через, мин (0 = нет)", "5" },
 };
+
+/* Whole number in [lo, hi], nothing else. */
+static uint8_t parse_uint(const char *s, unsigned long lo, unsigned long hi, unsigned long *out)
+{
+  char *end;
+  unsigned long v = strtoul(s, &end, 10);
+
+  if ((end == s) || (*end != '\0') || (v < lo) || (v > hi)) { return 0U; }
+  *out = v;
+  return 1U;
+}
 
 /* Value of one field as shown in the "current" column (not HTML-escaped). */
 static void field_format(const DeviceConfig *cfg, FieldId f, char *out, size_t out_size)
@@ -259,6 +278,9 @@ static void field_format(const DeviceConfig *cfg, FieldId f, char *out, size_t o
     case FIELD_NAME:        snprintf(out, out_size, "%s", cfg->name); return;
     case FIELD_SERVER_PORT: snprintf(out, out_size, "%u", cfg->server_port); return;
     case FIELD_IP_MODE:     snprintf(out, out_size, "%s", (cfg->use_static_ip != 0U) ? "STATIC" : "DHCP"); return;
+    case FIELD_BL_LEVEL:     snprintf(out, out_size, "%u", cfg->bl_level); return;
+    case FIELD_BL_DIM_LEVEL: snprintf(out, out_size, "%u", cfg->bl_dim_level); return;
+    case FIELD_BL_DIM_MIN:   snprintf(out, out_size, "%u", cfg->bl_dim_min); return;
     case FIELD_SERVER_IP:   ip = cfg->server_ip;      break;
     case FIELD_STATIC_IP:   ip = cfg->static_ip;      break;
     case FIELD_NETMASK:     ip = cfg->static_netmask; break;
@@ -300,6 +322,28 @@ static const char *field_parse(DeviceConfig *cfg, FieldId f, const char *val)
     case FIELD_STATIC_IP: return (parse_ipv4(val, cfg->static_ip)      != 0U) ? NULL : "Статический IP: нужен вид 192.168.1.100.";
     case FIELD_NETMASK:   return (parse_ipv4(val, cfg->static_netmask) != 0U) ? NULL : "Маска: нужен вид 255.255.255.0.";
     case FIELD_GATEWAY:   return (parse_ipv4(val, cfg->static_gw)      != 0U) ? NULL : "Шлюз: нужен вид 192.168.1.1.";
+
+    case FIELD_BL_LEVEL:
+    case FIELD_BL_DIM_LEVEL:
+    {
+      unsigned long v;
+      if (!parse_uint(val, 1UL, 100UL, &v))
+      {
+        return (f == FIELD_BL_LEVEL) ? "Яркость экрана: число 1-100."
+                                     : "Яркость в покое: число 1-100 (0 нельзя - экран должен оставаться видимым).";
+      }
+      if (f == FIELD_BL_LEVEL) { cfg->bl_level = (uint8_t)v; } else { cfg->bl_dim_level = (uint8_t)v; }
+      return NULL;
+    }
+
+    case FIELD_BL_DIM_MIN:
+    {
+      unsigned long v;
+      if (!parse_uint(val, 0UL, 1440UL, &v)) { return "Приглушать через: число минут 0-1440 (0 = не приглушать)."; }
+      cfg->bl_dim_min = (uint16_t)v;
+      return NULL;
+    }
+
     default:              return NULL;
   }
 }
@@ -445,7 +489,7 @@ static void build_table(const char *notice, uint8_t notice_ok)
     {
       page_add("<input name=\"%s\"%s autocomplete=\"off\">", k_fields[f].key,
                (f == (uint8_t)FIELD_NAME) ? " maxlength=\"23\"" :
-               (f == (uint8_t)FIELD_SERVER_PORT) ? " inputmode=\"numeric\"" : "");
+               ((f == (uint8_t)FIELD_SERVER_PORT) || FIELD_IS_LIVE(f)) ? " inputmode=\"numeric\"" : "");
     }
     page_add("</td></tr>");
   }
@@ -453,7 +497,9 @@ static void build_table(const char *notice, uint8_t notice_ok)
   page_add("</table></div>"
            "<p class=\"hint\">Пустое поле - значение не меняется. "
            "Статический IP в режиме DHCP используется как IP по умолчанию, "
-           "если DHCP-сервер не ответил за 10 с. Имя - латиница/цифры (экран кириллицу не показывает).</p>");
+           "если DHCP-сервер не ответил за 10 с. Имя - латиница/цифры (экран кириллицу не показывает). "
+           "Яркость применяется сразу по Save, без рестарта; «в покое» - после указанных минут "
+           "без нажатия кнопки страниц, нажатие возвращает обычную яркость.</p>");
   if (pending != 0U)
   {
     page_add("<p class=\"pend\">Есть сохранённые изменения - они вступят в силу после рестарта.</p>");
@@ -464,7 +510,7 @@ static void build_table(const char *notice, uint8_t notice_ok)
            "<button type=\"submit\" name=\"act\" value=\"restart\""
            " onclick=\"return confirm('Записать новые значения и перезапустить модуль?')\">Restart</button>"
            "</div>"
-           "<p class=\"hint\">Save - записать в модуль, применить после следующего рестарта. "
+           "<p class=\"hint\">Save - записать в модуль, применить после следующего рестарта (яркость - сразу). "
            "Cancel - выйти без изменений. Restart - записать и сразу перезапустить.</p>"
            "</form>");
   /* After /apply?... put "/" back in the address bar, so F5 just reloads
@@ -537,7 +583,16 @@ static void handle_apply(struct tcp_pcb *tpcb, const char *query)
     send_and_close(tpcb, "200 OK", s_page, s_page_len);
     return;
   }
-  if (changed != 0U) { Debug_Print("[http] settings saved from web page\r\n"); }
+  if (changed != 0U)
+  {
+    /* Backlight settings need no restart: copy them into the running config
+       as well - the TFT picks them up on its next poll. */
+    DeviceConfig *run = device_config_get();
+    run->bl_level     = next.bl_level;
+    run->bl_dim_level = next.bl_dim_level;
+    run->bl_dim_min   = next.bl_dim_min;
+    Debug_Print("[http] settings saved from web page\r\n");
+  }
 
   if (strcmp(act, "restart") == 0)
   {

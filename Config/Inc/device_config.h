@@ -45,6 +45,12 @@ typedef struct
   uint8_t  static_ip[4];
   uint8_t  static_netmask[4];
   uint8_t  static_gw[4];
+  /* --- version 2 ---------------------------------------------------- */
+  uint8_t  bl_level;           /* TFT backlight, % (1..100), normal use */
+  uint8_t  bl_dim_level;       /* % (1..100) after bl_dim_min idle minutes -
+                                   never 0, the screen stays readable */
+  uint16_t bl_dim_min;         /* minutes without a button press before
+                                   dimming; 0 = never dim */
   uint32_t crc32;              /* over every byte above - device_config_load()
                                    falls back to defaults on a mismatch (blank
                                    flash, partial write, or a version bump

@@ -20,7 +20,7 @@
 #include "stm32f4xx_hal.h"
 
 #define DEVICE_CONFIG_MAGIC          0x43464731U  /* ASCII "CFG1" */
-#define DEVICE_CONFIG_VERSION        1U
+#define DEVICE_CONFIG_VERSION        2U
 #define DEVICE_CONFIG_FLASH_SECTOR   FLASH_SECTOR_11
 #define DEVICE_CONFIG_FLASH_ADDR     0x080E0000U
 
@@ -38,6 +38,26 @@
 #define DEFAULT_STATIC_IP   {192U, 168U, 1U, 100U}
 #define DEFAULT_NETMASK     {255U, 255U, 255U, 0U}
 #define DEFAULT_GATEWAY     {192U, 168U, 1U, 1U}
+/* TFT backlight (version 2) */
+#define DEFAULT_BL_LEVEL      100U
+#define DEFAULT_BL_DIM_LEVEL  20U
+#define DEFAULT_BL_DIM_MIN    5U
+
+/* Layout of version 1, exactly as it was saved by older firmware - only
+   used to migrate such a config to the current version at boot. */
+typedef struct
+{
+  uint32_t magic;
+  uint32_t version;
+  uint8_t  server_ip[4];
+  uint16_t server_port;
+  char     name[24];
+  uint8_t  use_static_ip;
+  uint8_t  static_ip[4];
+  uint8_t  static_netmask[4];
+  uint8_t  static_gw[4];
+  uint32_t crc32;
+} DeviceConfigV1;
 
 static const uint8_t k_default_ip[4]   = DEFAULT_STATIC_IP;
 static const uint8_t k_default_mask[4] = DEFAULT_NETMASK;
@@ -87,6 +107,9 @@ static void set_defaults(DeviceConfig *cfg)
   memcpy(cfg->static_ip,      k_default_ip,   4U);
   memcpy(cfg->static_netmask, k_default_mask, 4U);
   memcpy(cfg->static_gw,      k_default_gw,   4U);
+  cfg->bl_level     = DEFAULT_BL_LEVEL;
+  cfg->bl_dim_level = DEFAULT_BL_DIM_LEVEL;
+  cfg->bl_dim_min   = DEFAULT_BL_DIM_MIN;
 }
 
 static uint8_t flash_config_valid(const DeviceConfig *cfg)
@@ -94,6 +117,33 @@ static uint8_t flash_config_valid(const DeviceConfig *cfg)
   return ((cfg->magic == DEVICE_CONFIG_MAGIC) &&
           (cfg->version == DEVICE_CONFIG_VERSION) &&
           (config_crc(cfg) == cfg->crc32)) ? 1U : 0U;
+}
+
+/* A valid version-1 config in Flash: keep every v1 setting, take defaults
+   for what v2 added, and write it back as v2 right away (one ~1 s sector
+   erase on the first boot of the new firmware) - so the web page's
+   "saved for next boot" view (device_config_stored()) works at once. */
+static uint8_t migrate_v1(const void *flash)
+{
+  const DeviceConfigV1 *v1 = (const DeviceConfigV1 *)flash;
+
+  if ((v1->magic != DEVICE_CONFIG_MAGIC) || (v1->version != 1U) ||
+      (crc32_compute((const uint8_t *)v1, (uint32_t)offsetof(DeviceConfigV1, crc32)) != v1->crc32))
+  {
+    return 0U;
+  }
+  set_defaults(&s_config);
+  memcpy(s_config.server_ip, v1->server_ip, 4U);
+  s_config.server_port = v1->server_port;
+  memcpy(s_config.name, v1->name, sizeof(s_config.name));
+  s_config.name[sizeof(s_config.name) - 1U] = '\0';
+  s_config.use_static_ip = v1->use_static_ip;
+  memcpy(s_config.static_ip,      v1->static_ip,      4U);
+  memcpy(s_config.static_netmask, v1->static_netmask, 4U);
+  memcpy(s_config.static_gw,      v1->static_gw,      4U);
+  s_config.crc32 = config_crc(&s_config);
+  (void)device_config_store(&s_config);
+  return 1U;
 }
 
 void device_config_load(void)
@@ -104,7 +154,7 @@ void device_config_load(void)
   {
     memcpy(&s_config, flash_cfg, sizeof(s_config));
   }
-  else
+  else if (migrate_v1(flash_cfg) == 0U)
   {
     set_defaults(&s_config);
   }

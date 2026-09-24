@@ -15,6 +15,8 @@
 #include "panel.h"
 #include "diag_cpu.h"
 #include "clock_page.h"
+#include "tft_backlight.h"
+#include "device_config.h"
 #include "st7796s.h"
 #include "main.h"
 
@@ -492,6 +494,49 @@ void TFT_App_UpdateInfo(const char *server_str, const char *device_name)
   }
 }
 
+/* Backlight: normal level, dimmed to bl_dim_level after bl_dim_min minutes
+   without a page-button press (device_config, set on the web page). Never
+   switched fully off - the dim level is at least 1 %. */
+static uint32_t s_last_activity;  /* HAL tick of the last button press */
+static uint8_t  s_dimmed;
+static uint8_t  s_seen_bl_level;  /* cfg->bl_level last seen - a change from the
+                                      web page counts as activity */
+
+static uint8_t backlight_level(uint8_t pct)
+{
+  return (pct == 0U) ? 1U : ((pct > 100U) ? 100U : pct);
+}
+
+/* Every TFT_App_AlivePoll() call; a few compares unless the level changes. */
+static void backlight_poll(void)
+{
+  const DeviceConfig *cfg = device_config_get();
+  const uint32_t      now = HAL_GetTick();
+  uint8_t             want;
+
+  if (cfg->bl_level != s_seen_bl_level)
+  {
+    /* New level saved on the web page: show it at once, undimmed */
+    s_seen_bl_level = cfg->bl_level;
+    s_last_activity = now;
+    s_dimmed = 0U;
+  }
+  if (cfg->bl_dim_min == 0U)
+  {
+    s_dimmed = 0U;  /* dimming switched off */
+  }
+  else if (!s_dimmed && ((now - s_last_activity) >= (uint32_t)cfg->bl_dim_min * 60000U))
+  {
+    s_dimmed = 1U;
+  }
+
+  want = backlight_level(s_dimmed ? cfg->bl_dim_level : cfg->bl_level);
+  if (want != TFT_Backlight_Get())
+  {
+    TFT_Backlight_Set(want);
+  }
+}
+
 /**
   * @brief  One-shot TFT hardware check at boot. Everything here is blocking
   *         (~7 s) - runs before lwIP on purpose. What to look for:
@@ -513,6 +558,10 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
   char msg[128];
 
   ST7796S_Init(&hspi3);
+  /* From here on the backlight is PWM (PC7 -> TIM3_CH2) at the configured
+     level, dimmed after idle minutes by backlight_poll(). */
+  TFT_Backlight_Init(backlight_level(device_config_get()->bl_level));
+  s_last_activity = HAL_GetTick();
 
   /* 1. Colour check + throughput: time one full-screen fill (307 200 B).
      Expect ~125 ms at 20 MHz SCK (~250 ms at 10 MHz). */
@@ -671,13 +720,25 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
       s_btn_pressed = raw_pressed;
       if (raw_pressed)
       {
-        s_page = (TFT_Page)(((unsigned)s_page + 1U) % (unsigned)TFT_PAGE_COUNT);
-        draw_page_static(s_page);
-        next_tick = HAL_GetTick();  /* redraw this page's live fields below right
-                                        away instead of waiting up to 1 s */
+        s_last_activity = HAL_GetTick();
+        if (s_dimmed)
+        {
+          /* First press on a dimmed screen only wakes it - the user can't
+             see well enough yet to want the next page. */
+          s_dimmed = 0U;
+        }
+        else
+        {
+          s_page = (TFT_Page)(((unsigned)s_page + 1U) % (unsigned)TFT_PAGE_COUNT);
+          draw_page_static(s_page);
+          next_tick = HAL_GetTick();  /* redraw this page's live fields below right
+                                          away instead of waiting up to 1 s */
+        }
       }
     }
   }
+
+  backlight_poll();
 
   /* Instrument pages animate faster than the 1 Hz status refresh below -
      Panel_Poll() paces itself (demo 10 Hz, one widget redraw per call). */

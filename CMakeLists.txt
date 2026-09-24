@@ -76,6 +76,7 @@ set(PROJECT_SOURCES
   Core/Src/tcp_echo_client.c
   Display/Src/st7796s.c
   Display/Src/tft_app.c
+  Display/Src/tft_backlight.c
   Panel/Src/gfx.c
   Panel/Src/panel.c
   Panel/Src/panel_pages.c
