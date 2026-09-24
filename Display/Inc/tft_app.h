@@ -45,7 +45,7 @@ extern SPI_HandleTypeDef hspi3;
 void TFT_App_GPIO_Init(void);
 
 /**
-  * @brief  Configure SPI3 as the TFT master (10 MHz, mode 0, software CS).
+  * @brief  Configure SPI3 as the TFT master (20 MHz, mode 0, software CS).
   *         Must run before TFT_App_SmokeTest(). See tft_app.c for the
   *         prescaler/throughput trade-off notes.
   */
