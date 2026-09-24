@@ -14,6 +14,7 @@
 #include "tft_app.h"
 #include "panel.h"
 #include "diag_cpu.h"
+#include "clock_page.h"
 #include "st7796s.h"
 #include "main.h"
 
@@ -110,7 +111,7 @@ void TFT_App_SPI3_Init(void)
  * Pages (TFT_Page): SETUP (link/DHCP/IP/server/TCP/uptime/frame-time),
  * RECEIVED (the full last TCP message, wrapped/multi-line), REMOTE and
  * LOCAL (instrument pages - gauges, readouts, sliders, lamps, buttons - drawn
- * by Panel/, see Panel/Inc/panel.h), and CPU (main-loop load, only when
+ * by Panel/, see Panel/Inc/panel.h), CLOCK (NTP time, Clock/), and CPU (main-loop load, only when
  * DIAG_CPU_PAGE is on - Diag/Inc/diag_config.h). Cycled by a physical button on TFT_PAGEBTN_Pin
  * (PC6/SV1.7, active low, internal pull-up - see TFT_App_GPIO_Init()).
  *
@@ -127,6 +128,7 @@ typedef enum
   TFT_PAGE_RECEIVED,
   TFT_PAGE_REMOTE,     /* Panel/ PANEL_PAGE_REMOTE */
   TFT_PAGE_LOCAL,      /* Panel/ PANEL_PAGE_LOCAL  */
+  TFT_PAGE_CLOCK,      /* Clock/ NTP clock, see clock_page.h */
 #if DIAG_CPU_PAGE
   TFT_PAGE_CPU,        /* Diag/ main-loop load, see diag_cpu.h */
 #endif
@@ -437,6 +439,10 @@ static void draw_page_static(TFT_Page page)
   {
     case TFT_PAGE_SETUP:    draw_page_setup_static();    break;
     case TFT_PAGE_RECEIVED: draw_page_received_static(); break;
+    case TFT_PAGE_CLOCK:
+      draw_page_chrome("CLOCK", TFT_PAGE_CLOCK);
+      Clock_PageDraw();
+      break;
 #if DIAG_CPU_PAGE
     case TFT_PAGE_CPU:      draw_page_cpu_static();      break;
 #endif
@@ -677,6 +683,7 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
      Panel_Poll() paces itself (demo 10 Hz, one widget redraw per call). */
   if (s_page == TFT_PAGE_REMOTE) { Panel_Poll(PANEL_PAGE_REMOTE); }
   if (s_page == TFT_PAGE_LOCAL)  { Panel_Poll(PANEL_PAGE_LOCAL); }
+  if (s_page == TFT_PAGE_CLOCK)  { Clock_PagePoll(); }  /* redraws only what changed */
 
   /* Once a second: heartbeat square, then a sweep over the page's live
      rows - ONE row per call, not all at once. A 16-char value row at

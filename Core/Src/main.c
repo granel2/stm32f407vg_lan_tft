@@ -37,6 +37,7 @@
 #include "config_server.h"
 #include "config_http.h"
 #include "diag_cpu.h"
+#include "clock.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -162,6 +163,7 @@ int main(void)
   tcp_echo_client_init();
   config_server_init();
   config_http_init();
+  clock_init();     /* Clock/: NTP time for the CLOCK page, see clock_config.h */
   diag_cpu_init();  /* Diag/: main-loop load stats, see diag_config.h */
   /* USER CODE END 2 */
 
@@ -339,6 +341,9 @@ int main(void)
                         ip_src,
                         tcp_echo_client_state_char());
       diag_cpu_end(DIAG_SECT_TFT);
+
+      /* NTP time (Clock/): paces itself - one request an hour once set */
+      clock_poll(has_ip);
 
       /* On the default IP there is no route to the TCP server anyway, and the
          client's failed connects would only trigger ETH resets. */

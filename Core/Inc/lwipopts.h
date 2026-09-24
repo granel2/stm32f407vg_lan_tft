@@ -89,6 +89,14 @@
 #define LWIP_DHCP                       1
 #define LWIP_AUTOIP                     0
 
+/* ---------- DNS options ---------- */
+/* For the NTP host name in Clock/ (clock_config.h). With DHCP the DNS
+   server comes from the lease (LWIP_DHCP_PROVIDE_DNS_SERVERS follows
+   LWIP_DNS); in static-IP mode clock.c falls back to the gateway. Costs
+   one UDP pcb (MEMP_NUM_UDP_PCB 4: DHCP + DNS + SNTP) and one cyclic
+   timeout (MEMP_NUM_SYS_TIMEOUT 10 still has room). */
+#define LWIP_DNS                1
+
 /* ---------- UDP options ---------- */
 #define LWIP_UDP                1
 #define UDP_TTL                 255
