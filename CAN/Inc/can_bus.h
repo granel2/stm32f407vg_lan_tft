@@ -55,6 +55,13 @@ typedef struct
    Call once at boot. Returns 1 on success. */
 uint8_t  can_bus_init(void);
 
+/* Self-test: 1 = silent loopback (bxCAN LBKM + SILM) - every transmitted
+   frame comes straight back to the own receiver inside the chip, nothing
+   reaches the pins, frames from the real bus are NOT received. Tests the
+   driver, bit timing, filter, interrupt and queue; not the transceiver or
+   the wiring. Call before can_bus_init(). */
+void     can_bus_set_loopback(uint8_t on);
+
 /* Main loop, every pass: drains the RX queue (log + handler) and prints
    the periodic summary. */
 void     can_bus_poll(void);

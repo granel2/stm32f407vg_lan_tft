@@ -84,6 +84,7 @@ set(PROJECT_SOURCES
   Config/Src/config_server.c
   Config/Src/config_http.c
   Diag/Src/diag_cpu.c
+  Diag/Src/diag_can.c
   Clock/Src/clock.c
   Clock/Src/clock_page.c
   CAN/Src/can_bus.c

@@ -19,6 +19,7 @@
 
 static CanRxHandler s_handler;
 static uint8_t      s_ok;          /* init succeeded */
+static uint8_t      s_loopback;    /* can_bus_set_loopback() */
 
 /* RX queue: written by the RX0 interrupt, read by can_bus_poll() */
 static CanFrame          s_q[CAN_RX_QUEUE_LEN];
@@ -121,7 +122,8 @@ uint8_t can_bus_init(void)
      Automatic retransmission stays on (NART = 0). */
   CAN1->MCR |= CAN_MCR_ABOM | CAN_MCR_TXFP;
   CAN1->MCR &= ~CAN_MCR_NART;
-  CAN1->BTR = btr | (CAN_SILENT ? CAN_BTR_SILM : 0U);
+  CAN1->BTR = btr | ((CAN_SILENT || s_loopback) ? CAN_BTR_SILM : 0U)
+                  | (s_loopback ? CAN_BTR_LBKM : 0U);
 
   /* Filter bank 0: 32-bit mask mode, mask 0 = accept everything -> FIFO0.
      Banks 14+ belong to CAN2 (reset value of CAN2SB), unused here. */
@@ -152,7 +154,9 @@ uint8_t can_bus_init(void)
   s_ok = 1U;
   snprintf(msg, sizeof(msg), "[can] CAN1 up: %u kbit/s (APB1 %lu MHz, presc %lu, %lu tq), %s\r\n",
            (unsigned)CAN_BITRATE_KBPS, (unsigned long)(pclk1 / 1000000U), (unsigned long)presc,
-           (unsigned long)ntq, CAN_SILENT ? "listen-only" : "normal mode");
+           (unsigned long)ntq,
+           s_loopback ? "SILENT LOOPBACK self-test - real bus not used" :
+           CAN_SILENT ? "listen-only" : "normal mode");
   Debug_Print(msg);
   return 1U;
 }
@@ -198,6 +202,11 @@ void can_bus_rx0_irq(void)
   }
 }
 
+void can_bus_set_loopback(uint8_t on)
+{
+  s_loopback = on;
+}
+
 void can_bus_set_rx_handler(CanRxHandler h)
 {
   s_handler = h;
@@ -211,7 +220,7 @@ uint8_t can_bus_send(const CanFrame *f)
   const uint8_t len = (f->len > 8U) ? 8U : f->len;
   uint32_t lo = 0U, hi = 0U;
 
-  if (!s_ok || CAN_SILENT)
+  if (!s_ok || (CAN_SILENT && !s_loopback))
   {
     return 0U;
   }

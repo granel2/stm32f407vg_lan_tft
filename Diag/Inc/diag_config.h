@@ -39,10 +39,23 @@
 #define DIAG_CPU_PAGE           1
 #endif
 
+/* CAN1 self-test in silent loopback (CAN/): a numbered frame every
+   second, alternately 11- and 29-bit id, must come back intact within
+   100 ms; result to USART1. While on, the real bus on J3 is NOT used
+   (no receive, no transmit) - set to 0 for real CAN traffic. */
+#ifndef DIAG_CAN_LOOPBACK
+#define DIAG_CAN_LOOPBACK       1
+#endif
+#ifndef DIAG_CAN_REPORT_S
+#define DIAG_CAN_REPORT_S       5
+#endif
+
 /* ---- dependencies: nothing below this line to edit ------------------- */
 #if !DIAG_ENABLE
 #undef  DIAG_CPU_STATS
 #define DIAG_CPU_STATS          0
+#undef  DIAG_CAN_LOOPBACK
+#define DIAG_CAN_LOOPBACK       0
 #endif
 #if !DIAG_CPU_STATS
 #undef  DIAG_CPU_UART
