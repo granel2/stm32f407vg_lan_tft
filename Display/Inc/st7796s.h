@@ -58,7 +58,11 @@ uint16_t ST7796S_Height(void);
    back (a 1-bit shift is normal for this controller in 4-wire SPI). */
 void     ST7796S_ReadID(uint8_t out[4]);
 
+/* Fills of 256+ px run by DMA and return before the pixels are out; any
+   later driver call waits for them automatically. Call ST7796S_WaitIdle()
+   only when the frame must be complete before going on (timing, reset). */
 void     ST7796S_FillScreen(uint16_t color);
+void     ST7796S_WaitIdle(void);
 void     ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 /* Hardware smoke test: colour bars, white border and a checkerboard corner.
    Wrong colours / mirrored layout tell which MADCTL bits the panel needs. */

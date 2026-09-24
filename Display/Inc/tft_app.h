@@ -34,6 +34,9 @@ extern "C" {
    HAL_SPI_MspInit()/Error_Handler() call sites elsewhere can reference it if
    ever needed; ordinary callers only need the functions below. */
 extern SPI_HandleTypeDef hspi3;
+/* DMA1 Stream5 / Channel 0 = SPI3_TX, used by ST7796S_FillRect() for large
+   fills. Configured in HAL_SPI_MspInit(), IRQ in stm32f4xx_it.c. */
+extern DMA_HandleTypeDef hdma_spi3_tx;
 
 /**
   * @brief  Configure the TFT control GPIOs: CS (PA15), DC/RST/BL

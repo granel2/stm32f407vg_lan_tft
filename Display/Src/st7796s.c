@@ -1,11 +1,19 @@
 /**
   ******************************************************************************
   * @file    st7796s.c
-  * @brief   Minimal ST7796S driver over 4-wire SPI (blocking HAL transfers).
+  * @brief   Minimal ST7796S driver over 4-wire SPI.
   *
-  * Only what a hardware bring-up needs: reset + init sequence, rotation,
-  * rectangle fills and a test pattern. No text/graphics yet - that comes
-  * once the panel is confirmed working.
+  * Reset + init sequence, rotation, rectangle fills, test pattern, 7-segment
+  * digits and a 5x7 font. Every pixel goes out through ST7796S_FillRect().
+  *
+  * Commands and small fills are blocking HAL transfers. Fills of at least
+  * DMA_MIN_PIXELS go out by DMA (DMA1 Stream5, see HAL_SPI_MspInit()): the
+  * SPI is switched to 16-bit frames and the DMA re-sends one colour word
+  * with memory increment off, so no pixel buffer is needed. FillRect()
+  * returns as soon as the transfer is started; the next driver call waits
+  * for it (dma_wait()), so callers never see the difference - except that
+  * the CPU is free in between. Use ST7796S_WaitIdle() when the frame has to
+  * be on the glass before going on (timing, reset).
   ******************************************************************************
   */
 
@@ -43,10 +51,23 @@
 /* Pixel scratch buffer for fills: 480 px * 2 B = one full row in landscape */
 #define FILL_BUF_PIXELS 480U
 
+/* Fills smaller than this stay blocking: at 20 MHz 256 px take ~26 us,
+   about what starting and finishing a DMA transfer costs anyway. */
+#define DMA_MIN_PIXELS  256U
+/* DMA NDTR is 16 bits: longer fills are sent as several chunks */
+#define DMA_MAX_CHUNK   0xFFFFU
+
 static SPI_HandleTypeDef *tft_spi;
 static uint16_t tft_width  = ST7796S_WIDTH;
 static uint16_t tft_height = ST7796S_HEIGHT;
 static uint8_t  fill_buf[FILL_BUF_PIXELS * 2U];
+
+/* DMA fill state, shared with HAL_SPI_TxCpltCallback() (ISR context).
+   dma_color must stay static: the DMA keeps reading it after FillRect()
+   has returned. */
+static volatile uint8_t  dma_busy;
+static volatile uint32_t dma_left;   /* pixels not yet handed to the DMA */
+static uint16_t          dma_color;
 
 /* ---- low-level helpers ------------------------------------------------- */
 
@@ -66,9 +87,85 @@ static void spi_tx(const uint8_t *buf, uint32_t len)
   }
 }
 
+/* SPI frame size. DFF may only change while the SPI is disabled; HAL
+   re-enables it on the next transfer. Init.DataSize is kept in step
+   because HAL's polling transmit reads it to pick 8- or 16-bit writes. */
+static void spi_frame16(uint8_t on)
+{
+  __HAL_SPI_DISABLE(tft_spi);
+  if (on != 0U)
+  {
+    SET_BIT(tft_spi->Instance->CR1, SPI_CR1_DFF);
+    tft_spi->Init.DataSize = SPI_DATASIZE_16BIT;
+  }
+  else
+  {
+    CLEAR_BIT(tft_spi->Instance->CR1, SPI_CR1_DFF);
+    tft_spi->Init.DataSize = SPI_DATASIZE_8BIT;
+  }
+}
+
+/* Hand the next <= 64K pixels of the current fill to the DMA. */
+static void dma_next_chunk(void)
+{
+  uint32_t n = (dma_left > DMA_MAX_CHUNK) ? DMA_MAX_CHUNK : dma_left;
+
+  dma_left -= n;
+  if (HAL_SPI_Transmit_DMA(tft_spi, (uint8_t *)&dma_color, (uint16_t)n) != HAL_OK)
+  {
+    /* Should not happen (SPI was idle). Drop the rest of the fill rather
+       than hang every later draw call in dma_wait(). */
+    dma_left = 0U;
+    spi_frame16(0U);
+    cs_high();
+    dma_busy = 0U;
+  }
+}
+
+/* Block until a DMA fill started by FillRect() is on the wire and CS is
+   released. Every function that touches the bus calls this first. */
+static void dma_wait(void)
+{
+  while (dma_busy != 0U)
+  {
+  }
+}
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  if ((tft_spi == NULL) || (hspi != tft_spi))
+  {
+    return;
+  }
+  if (dma_left > 0U)
+  {
+    dma_next_chunk();
+    return;
+  }
+  /* HAL has already waited for BSY=0, so the last pixel is out */
+  spi_frame16(0U);
+  cs_high();
+  dma_busy = 0U;
+}
+
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+  if ((tft_spi == NULL) || (hspi != tft_spi))
+  {
+    return;
+  }
+  /* Only reachable through a DMA error (SPI3_IRQn is left off, see
+     HAL_SPI_MspInit()); HAL has already stopped the stream. */
+  dma_left = 0U;
+  spi_frame16(0U);
+  cs_high();
+  dma_busy = 0U;
+}
+
 /* Command with optional parameter bytes, framed by CS. */
 static void write_cmd(uint8_t cmd, const uint8_t *params, uint8_t nparams)
 {
+  dma_wait();
   cs_low();
   dc_cmd();
   spi_tx(&cmd, 1U);
@@ -200,6 +297,7 @@ void ST7796S_ReadID(uint8_t out[4])
   uint8_t cmd = CMD_RDID4;
 
   memset(out, 0, 4);
+  dma_wait();
   cs_low();
   dc_cmd();
   spi_tx(&cmd, 1U);
@@ -213,6 +311,7 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
   uint32_t remaining;
   uint32_t n;
 
+  dma_wait();
   if ((x >= tft_width) || (y >= tft_height) || (w == 0U) || (h == 0U))
   {
     return;
@@ -221,12 +320,6 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
   if ((uint32_t)y + h > tft_height) { h = (uint16_t)(tft_height - y); }
 
   remaining = (uint32_t)w * h;
-  n = (remaining < FILL_BUF_PIXELS) ? remaining : FILL_BUF_PIXELS;
-  for (uint32_t i = 0; i < n; i++)
-  {
-    fill_buf[2U * i]      = (uint8_t)(color >> 8);
-    fill_buf[2U * i + 1U] = (uint8_t)color;
-  }
 
   set_window(x, y, (uint16_t)(x + w - 1U), (uint16_t)(y + h - 1U));
 
@@ -234,6 +327,25 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
   dc_cmd();
   { uint8_t c = CMD_RAMWR; spi_tx(&c, 1U); }
   dc_data();
+
+  if (remaining >= DMA_MIN_PIXELS)
+  {
+    /* 16-bit frames go out MSB first - same byte order as fill_buf below.
+       CS stays low; HAL_SPI_TxCpltCallback() raises it when done. */
+    dma_color = color;
+    dma_left  = remaining;
+    dma_busy  = 1U;
+    spi_frame16(1U);
+    dma_next_chunk();
+    return;
+  }
+
+  n = (remaining < FILL_BUF_PIXELS) ? remaining : FILL_BUF_PIXELS;
+  for (uint32_t i = 0; i < n; i++)
+  {
+    fill_buf[2U * i]      = (uint8_t)(color >> 8);
+    fill_buf[2U * i + 1U] = (uint8_t)color;
+  }
   while (remaining > 0U)
   {
     n = (remaining < FILL_BUF_PIXELS) ? remaining : FILL_BUF_PIXELS;
@@ -241,6 +353,11 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
     remaining -= n;
   }
   cs_high();
+}
+
+void ST7796S_WaitIdle(void)
+{
+  dma_wait();
 }
 
 void ST7796S_FillScreen(uint16_t color)

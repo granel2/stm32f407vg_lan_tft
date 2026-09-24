@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
+#include "tft_app.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -387,6 +388,12 @@ void HAL_ETH_MspDeInit(ETH_HandleTypeDef *heth)
   * @brief SPI3 MSP Initialization - TFT bus on the SV4 header
   * PC10 -> SPI3_SCK, PC11 -> SPI3_MISO, PC12 -> SPI3_MOSI (AF6).
   * NSS is software-driven (PA15 as plain GPIO, set up in MX_GPIO_Init).
+  * TX DMA: DMA1 Stream5 / Channel 0, half-words, memory increment OFF -
+  * ST7796S_FillRect() streams one colour word, SPI in 16-bit frames.
+  * SPI3_IRQn is deliberately NOT enabled: in 2-line mode the unread RX side
+  * raises OVR every other frame, and with the ERR interrupt HAL turns on
+  * for DMA transfers that would be an IRQ every ~1.6 us for the whole fill.
+  * Completion comes from the DMA interrupt; HAL clears OVR at the end.
   * Not declared in the .ioc for the same reason as ETH above.
   */
 void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
@@ -404,6 +411,27 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    hdma_spi3_tx.Instance                 = DMA1_Stream5;
+    hdma_spi3_tx.Init.Channel             = DMA_CHANNEL_0;
+    hdma_spi3_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+    hdma_spi3_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_spi3_tx.Init.MemInc              = DMA_MINC_DISABLE;
+    hdma_spi3_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+    hdma_spi3_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_HALFWORD;
+    hdma_spi3_tx.Init.Mode                = DMA_NORMAL;
+    hdma_spi3_tx.Init.Priority            = DMA_PRIORITY_LOW;
+    hdma_spi3_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_spi3_tx) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    __HAL_LINKDMA(hspi, hdmatx, hdma_spi3_tx);
+
+    /* Below ETH (5): a late fill-complete only delays CS by a few us */
+    HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   }
 }
 
@@ -413,6 +441,8 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
   {
     __HAL_RCC_SPI3_CLK_DISABLE();
     HAL_GPIO_DeInit(GPIOC, GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12);
+    HAL_DMA_DeInit(hspi->hdmatx);
+    HAL_NVIC_DisableIRQ(DMA1_Stream5_IRQn);
   }
 }
 

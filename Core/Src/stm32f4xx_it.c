@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stm32f4xx_hal_eth.h"
+#include "tft_app.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -240,6 +241,15 @@ void SysTick_Handler(void)
 void ETH_IRQHandler(void)
 {
   HAL_ETH_IRQHandler(&EthHandle);
+}
+
+/**
+  * @brief DMA1 Stream5 = SPI3_TX, TFT pixel fills (see HAL_SPI_MspInit()).
+  * Hand-added like ETH above - SPI3 is not in the .ioc either.
+  */
+void DMA1_Stream5_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_spi3_tx);
 }
 
 /* USER CODE END 1 */

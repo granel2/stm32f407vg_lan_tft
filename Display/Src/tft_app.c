@@ -17,6 +17,7 @@
 #include "main.h"
 
 SPI_HandleTypeDef hspi3;
+DMA_HandleTypeDef hdma_spi3_tx;
 
 /* Debug_Print() is main.c's UART logger (USART1, 921600 baud); declared in
    main.h so this module and main.c share one implementation. */
@@ -480,6 +481,7 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
   {
     t0 = HAL_GetTick();
     ST7796S_FillScreen(fills[i]);
+    ST7796S_WaitIdle();  /* DMA fill: time it to the last pixel */
     tft_frame_ms = HAL_GetTick() - t0;
     HAL_Delay(400);
   }
