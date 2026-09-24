@@ -551,15 +551,87 @@ uint16_t ST7796S_CharPitch(uint8_t scale)
   return (uint16_t)(6U * ((scale == 0U) ? 1U : scale));  /* 5 px glyph + 1 px gap */
 }
 
-void ST7796S_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t scale)
+static const uint8_t *glyph_rows(char c)
 {
-  const uint8_t *rows = NULL;
-  const uint8_t  s    = (scale == 0U) ? 1U : scale;
-
   for (uint32_t i = 0; i < FONT5X7_COUNT; i++)
   {
-    if (font5x7[i].ch == c) { rows = font5x7[i].rows; break; }
+    if (font5x7[i].ch == c) { return font5x7[i].rows; }
   }
+  return NULL;
+}
+
+/* Text fast path: the whole string as ONE RAM window, streamed a pixel
+   line at a time from fill_buf - one CASET/RASET/RAMWR per string instead
+   of one per run of equal pixels (~20 per glyph at scale 2). Also paints
+   the 1-px (x scale) gaps between characters with bg, but not the one
+   after the last character, so nothing outside the old footprint is
+   touched. Caller guarantees the box is on screen and one pixel line fits
+   fill_buf (text_fits()). Unknown characters come out as blank cells. */
+static void blit_text(uint16_t x, uint16_t y, const char *str, uint16_t len,
+                      uint16_t color, uint16_t bg, uint8_t s)
+{
+  const uint16_t w  = (uint16_t)(len * 6U * s - s);
+  const uint8_t  fh = (uint8_t)(color >> 8), fl = (uint8_t)color;
+  const uint8_t  bh = (uint8_t)(bg >> 8),    bl = (uint8_t)bg;
+
+  set_window(x, y, (uint16_t)(x + w - 1U), (uint16_t)(y + 7U * s - 1U));
+
+  cs_low();
+  dc_cmd();
+  { uint8_t c = CMD_RAMWR; spi_tx(&c, 1U); }
+  dc_data();
+  for (uint8_t row = 0; row < 7U; row++)
+  {
+    uint8_t *p = fill_buf;
+
+    for (uint16_t i = 0; i < len; i++)
+    {
+      const uint8_t *g     = glyph_rows(str[i]);
+      const uint8_t  bits  = (g != NULL) ? g[row] : 0U;
+      const uint8_t  ncols = (i == (uint16_t)(len - 1U)) ? 5U : 6U;  /* no gap after the last one */
+
+      for (uint8_t col = 0; col < ncols; col++)
+      {
+        const uint8_t on = (col < 5U) ? (uint8_t)((bits >> (4U - col)) & 1U) : 0U;
+
+        for (uint8_t k = 0; k < s; k++)
+        {
+          *p++ = on ? fh : bh;
+          *p++ = on ? fl : bl;
+        }
+      }
+    }
+    for (uint8_t k = 0; k < s; k++)
+    {
+      spi_tx(fill_buf, (uint32_t)w * 2U);
+    }
+  }
+  cs_high();
+}
+
+/* True when a len-character string at (x,y) can go through blit_text() */
+static uint8_t text_fits(uint16_t x, uint16_t y, uint32_t len, uint8_t s)
+{
+  const uint32_t w = len * 6U * s - s;
+
+  return (uint8_t)((len > 0U) && (w <= FILL_BUF_PIXELS) &&
+                   ((uint32_t)x + w <= tft_width) && ((uint32_t)y + 7U * s <= tft_height));
+}
+
+void ST7796S_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t scale)
+{
+  const uint8_t *rows;
+  const uint8_t  s = (scale == 0U) ? 1U : scale;
+
+  dma_wait();
+  if (text_fits(x, y, 1U, s))
+  {
+    blit_text(x, y, &c, 1U, color, bg, s);
+    return;
+  }
+
+  /* Partly off screen: per-run fills below, FillRect() clips each one */
+  rows = glyph_rows(c);
   if (rows == NULL)
   {
     /* Unsupported character: leave a blank (background) cell rather than
@@ -590,8 +662,18 @@ void ST7796S_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t b
 uint16_t ST7796S_DrawString(uint16_t x, uint16_t y, const char *s, uint16_t color, uint16_t bg, uint8_t scale)
 {
   const uint16_t pitch = ST7796S_CharPitch(scale);
+  const uint8_t  sc    = (scale == 0U) ? 1U : scale;
+  const size_t   len   = strlen(s);
   uint16_t cx = x;
 
+  dma_wait();
+  if (text_fits(x, y, (uint32_t)len, sc))
+  {
+    blit_text(x, y, s, (uint16_t)len, color, bg, sc);
+    return (uint16_t)(x + len * pitch);
+  }
+
+  /* Wider than one fill_buf line, or partly off screen: per character */
   while (*s != '\0')
   {
     ST7796S_DrawChar(cx, y, *s, color, bg, scale);

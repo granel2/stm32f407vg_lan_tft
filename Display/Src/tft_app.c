@@ -13,6 +13,7 @@
 
 #include "tft_app.h"
 #include "panel.h"
+#include "diag_cpu.h"
 #include "st7796s.h"
 #include "main.h"
 
@@ -109,7 +110,8 @@ void TFT_App_SPI3_Init(void)
  * Pages (TFT_Page): SETUP (link/DHCP/IP/server/TCP/uptime/frame-time),
  * RECEIVED (the full last TCP message, wrapped/multi-line), REMOTE and
  * LOCAL (instrument pages - gauges, readouts, sliders, lamps, buttons - drawn
- * by Panel/, see Panel/Inc/panel.h). Cycled by a physical button on TFT_PAGEBTN_Pin
+ * by Panel/, see Panel/Inc/panel.h), and CPU (main-loop load, only when
+ * DIAG_CPU_PAGE is on - Diag/Inc/diag_config.h). Cycled by a physical button on TFT_PAGEBTN_Pin
  * (PC6/SV1.7, active low, internal pull-up - see TFT_App_GPIO_Init()).
  *
  * Every page shares: a title row (name + "n/N" page indicator, top-right)
@@ -125,6 +127,9 @@ typedef enum
   TFT_PAGE_RECEIVED,
   TFT_PAGE_REMOTE,     /* Panel/ PANEL_PAGE_REMOTE */
   TFT_PAGE_LOCAL,      /* Panel/ PANEL_PAGE_LOCAL  */
+#if DIAG_CPU_PAGE
+  TFT_PAGE_CPU,        /* Diag/ main-loop load, see diag_cpu.h */
+#endif
   TFT_PAGE_COUNT
 } TFT_Page;
 
@@ -400,6 +405,31 @@ static void draw_page_received_static(void)
   }
 }
 
+#if DIAG_CPU_PAGE
+/* CPU page: rows 30 px apart from the SETUP layout's first row. Labels and
+   values both come from diag_cpu_rows(), so a new section there shows up
+   here without touching this file. */
+#define STATUS_Y_CPU0   STATUS_Y_LINK
+#define STATUS_CPU_ROW  30U
+
+/* Labels only - values follow row by row from TFT_App_AlivePoll()'s sweep,
+   which a page switch starts right away. */
+static void draw_page_cpu_static(void)
+{
+  DiagRow rows[DIAG_CPU_ROWS];
+  const uint8_t n = diag_cpu_rows(rows, (uint8_t)DIAG_CPU_ROWS);
+
+  draw_page_chrome("CPU", TFT_PAGE_CPU);
+  for (uint8_t i = 0; i < n; i++)
+  {
+    ST7796S_DrawString(STATUS_LABEL_X, (uint16_t)(STATUS_Y_CPU0 + (uint16_t)i * STATUS_CPU_ROW),
+                       rows[i].label, ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  }
+  ST7796S_DrawString(STATUS_LABEL_X, (uint16_t)(STATUS_Y_CPU0 + (DIAG_CPU_ROWS + 1U) * STATUS_CPU_ROW),
+                     "% OF 1 S, MAX = ONE RUN", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+}
+#endif /* DIAG_CPU_PAGE */
+
 /* Add a case here (and a TFT_Page value above) for another page. */
 static void draw_page_static(TFT_Page page)
 {
@@ -407,6 +437,9 @@ static void draw_page_static(TFT_Page page)
   {
     case TFT_PAGE_SETUP:    draw_page_setup_static();    break;
     case TFT_PAGE_RECEIVED: draw_page_received_static(); break;
+#if DIAG_CPU_PAGE
+    case TFT_PAGE_CPU:      draw_page_cpu_static();      break;
+#endif
     case TFT_PAGE_REMOTE:
       draw_page_chrome("REMOTE", TFT_PAGE_REMOTE);
       Panel_DrawPage(PANEL_PAGE_REMOTE);
@@ -516,13 +549,72 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
   Debug_Print("[tft] smoke test done, status screen running\r\n");
 }
 
+/* Live-row sweep state for TFT_App_AlivePoll(): index of the next row to
+   redraw, or REFRESH_IDLE once the page's rows are all done. */
+#define REFRESH_IDLE  0xFFU
+static uint8_t s_refresh_row = REFRESH_IDLE;
+#if DIAG_CPU_PAGE
+static DiagRow s_cpu_rows[DIAG_CPU_ROWS];
+static uint8_t s_cpu_nrows;
+#endif
+
+/* Redraws live row `idx` of the current page. Returns 0 when idx is past
+   the page's last live row (nothing drawn), so the sweep stops.
+   RECEIVED has no live rows (updated on arrival by TFT_App_ShowReceived());
+   REMOTE/LOCAL are driven by Panel_Poll(). */
+static uint8_t refresh_live_row(uint8_t idx, const char *ip_str, uint8_t link_up, char ip_src, char tcp_state)
+{
+  if (s_page == TFT_PAGE_SETUP)
+  {
+    const uint8_t has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
+
+    switch (idx)
+    {
+      case 0:
+        status_draw_value(STATUS_Y_LINK, link_up ? "UP" : "DOWN");
+        return 1U;
+      case 1:
+        status_draw_value(STATUS_Y_DHCP, !link_up        ? "---"          :
+                                          (ip_src == 'S') ? "OFF (STATIC)" :
+                                          !has_ip         ? "WAITING"      :
+                                          (ip_src == 'F') ? "NO-DEFAULT IP" : "OK");
+        return 1U;
+      case 2:
+        status_draw_value(STATUS_Y_IP, ip_str);
+        return 1U;
+      case 3:
+        status_draw_value(STATUS_Y_TCP, (tcp_state == 'C') ? "CONNECTING" :
+                                         (tcp_state == 'E') ? "CONNECTED"  : "IDLE");
+        return 1U;
+      case 4:
+      {
+        char msg[24];
+        snprintf(msg, sizeof(msg), "%lu S", (unsigned long)(HAL_GetTick() / 1000U));
+        status_draw_value(STATUS_Y_UPTIME, msg);
+        return 1U;
+      }
+      default:
+        return 0U;
+    }
+  }
+#if DIAG_CPU_PAGE
+  if ((s_page == TFT_PAGE_CPU) && (idx < s_cpu_nrows))
+  {
+    status_draw_value((uint16_t)(STATUS_Y_CPU0 + (uint16_t)idx * STATUS_CPU_ROW), s_cpu_rows[idx].value);
+    return 1U;
+  }
+#endif
+  return 0U;
+}
+
 /**
   * @brief  Proof the link stays alive after boot, the page button, and the
   *         active page's live fields: once a second, redraw whatever the
-  *         current page needs and toggle the heartbeat square. ~3 kB per
-  *         update at STATUS_FONT_SCALE = a few ms at 20 MHz, so it never
-  *         stalls the Ethernet main loop. Call every main-loop iteration -
-  *         the button check and the 1 Hz gate are both internal.
+  *         current page needs and toggle the heartbeat square. The live
+  *         rows are redrawn one per call (~2.5 ms each at 20 MHz), so no
+  *         single call stalls the Ethernet main loop for long. Call every
+  *         main-loop iteration - the button check, the 1 Hz gate and the
+  *         row sweep are all internal.
   *
   * @param  ip_str    Current IPv4 address as text (e.g. "192.168.1.42"), or
   *                    the literal string "---" if none has been assigned
@@ -540,7 +632,6 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
 void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tcp_state)
 {
   static uint32_t next_tick = 0;
-  const uint8_t   has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
 
   /* Page button - checked every call (not gated by the 1 Hz limiter below)
      for a responsive UI. Debounced by time rather than multi-sampling:
@@ -570,31 +661,27 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tc
   if (s_page == TFT_PAGE_REMOTE) { Panel_Poll(PANEL_PAGE_REMOTE); }
   if (s_page == TFT_PAGE_LOCAL)  { Panel_Poll(PANEL_PAGE_LOCAL); }
 
-  if ((int32_t)(HAL_GetTick() - next_tick) < 0)
+  /* Once a second: heartbeat square, then a sweep over the page's live
+     rows - ONE row per call, not all at once. A 16-char value row at
+     scale 2 is ~5 kB (~2.5 ms on the bus); drawing all of them in one go
+     held the main loop for tens of ms (54 ms on the CPU page, measured by
+     Diag/), and Ethernet waits for the whole of it. */
+  if ((int32_t)(HAL_GetTick() - next_tick) >= 0)
   {
+    next_tick = HAL_GetTick() + 1000U;
+    s_blink_phase ^= 1U;
+    ST7796S_FillRect(STATUS_BLINK_X, STATUS_BLINK_Y, 40U, 40U, s_blink_phase ? ST7796S_GREEN : ST7796S_RED);
+#if DIAG_CPU_PAGE
+    /* One snapshot per sweep, so all rows show the same 1 s window */
+    s_cpu_nrows = diag_cpu_rows(s_cpu_rows, (uint8_t)DIAG_CPU_ROWS);
+#endif
+    s_refresh_row = 0U;
     return;
   }
-  next_tick = HAL_GetTick() + 1000U;
-  s_blink_phase ^= 1U;
 
-  ST7796S_FillRect(STATUS_BLINK_X, STATUS_BLINK_Y, 40U, 40U, s_blink_phase ? ST7796S_GREEN : ST7796S_RED);
-
-  if (s_page == TFT_PAGE_SETUP)
+  if (s_refresh_row != REFRESH_IDLE)
   {
-    status_draw_value(STATUS_Y_LINK, link_up ? "UP" : "DOWN");
-    status_draw_value(STATUS_Y_DHCP, !link_up        ? "---"          :
-                                      (ip_src == 'S') ? "OFF (STATIC)" :
-                                      !has_ip         ? "WAITING"      :
-                                      (ip_src == 'F') ? "NO-DEFAULT IP" : "OK");
-    status_draw_value(STATUS_Y_IP,   ip_str);
-    status_draw_value(STATUS_Y_TCP,  (tcp_state == 'C') ? "CONNECTING" :
-                                      (tcp_state == 'E') ? "CONNECTED"  : "IDLE");
-    {
-      char msg[24];
-      snprintf(msg, sizeof(msg), "%lu S", (unsigned long)(HAL_GetTick() / 1000U));
-      status_draw_value(STATUS_Y_UPTIME, msg);
-    }
+    s_refresh_row = refresh_live_row(s_refresh_row, ip_str, link_up, ip_src, tcp_state) ?
+                    (uint8_t)(s_refresh_row + 1U) : REFRESH_IDLE;
   }
-  /* RECEIVED has nothing that needs a 1 Hz refresh (updated on arrival by
-     TFT_App_ShowReceived()); REMOTE/LOCAL are driven by Panel_Poll() above. */
 }

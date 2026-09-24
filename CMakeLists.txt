@@ -82,6 +82,7 @@ set(PROJECT_SOURCES
   Config/Src/device_config.c
   Config/Src/config_server.c
   Config/Src/config_http.c
+  Diag/Src/diag_cpu.c
   Middlewares/Third_Party/LwIP/src/core/init.c
   Middlewares/Third_Party/LwIP/src/core/def.c
   Middlewares/Third_Party/LwIP/src/core/dns.c
@@ -116,6 +117,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/Display/Inc
   ${CMAKE_SOURCE_DIR}/Panel/Inc
   ${CMAKE_SOURCE_DIR}/Config/Inc
+  ${CMAKE_SOURCE_DIR}/Diag/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy
   ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include

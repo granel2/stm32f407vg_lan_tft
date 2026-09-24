@@ -36,6 +36,7 @@
 #include "device_config.h"
 #include "config_server.h"
 #include "config_http.h"
+#include "diag_cpu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -161,14 +162,18 @@ int main(void)
   tcp_echo_client_init();
   config_server_init();
   config_http_init();
+  diag_cpu_init();  /* Diag/: main-loop load stats, see diag_config.h */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    diag_cpu_loop();
     Test_Blink_LEDs();
+    diag_cpu_begin(DIAG_SECT_HTTP);
     config_http_poll();
+    diag_cpu_end(DIAG_SECT_HTTP);
 
     /* A config save (from the web page or the port-7000 text protocol) bumps
        device_config_revision(). React here, so neither config module needs
@@ -212,12 +217,16 @@ int main(void)
        cheap HAL_ETH_ReadData call that returns NULL.  Avoids a race where
        EthRxPending was already cleared when the last ISR fired but a frame
        is still waiting in the DMA descriptor ring. */
+    diag_cpu_begin(DIAG_SECT_ETH);
     ethernetif_input(&gnetif);
 
     /* Poll PHY link state and lwIP's own timers (ARP, DHCP, TCP, ...) -
        NO_SYS=1 means nothing else is going to do this for us. */
     ethernetif_poll_link(&gnetif);
+    diag_cpu_end(DIAG_SECT_ETH);
+    diag_cpu_begin(DIAG_SECT_LWIP);
     sys_check_timeouts();
+    diag_cpu_end(DIAG_SECT_LWIP);
 
     /* DHCP fallback: in DHCP mode, if the link is up but no DHCP server has
        answered within DHCP_FALLBACK_MS, take the configured static IP ("IP
@@ -324,16 +333,20 @@ int main(void)
          anyway - see tft_app.h for the ip_str/link_up/tcp_state contract.
          TFT_App_AlivePoll() rate-limits itself to 1 Hz internally, so
          calling it every loop iteration here is cheap. */
+      diag_cpu_begin(DIAG_SECT_TFT);
       TFT_App_AlivePoll(has_ip ? ip4addr_ntoa(netif_ip4_addr(&gnetif)) : "---",
                         netif_is_link_up(&gnetif) ? 1U : 0U,
                         ip_src,
                         tcp_echo_client_state_char());
+      diag_cpu_end(DIAG_SECT_TFT);
 
       /* On the default IP there is no route to the TCP server anyway, and the
          client's failed connects would only trigger ETH resets. */
       if (has_ip && (ip_src != 'F'))
       {
+        diag_cpu_begin(DIAG_SECT_TCP);
         tcp_echo_client_poll();
+        diag_cpu_end(DIAG_SECT_TCP);
 
         /* Show whatever the server just sent back on the LAST MSG: row for
            2 s (TFT_App_ShowReceived() handles the timing/blanking itself,
@@ -344,7 +357,9 @@ int main(void)
           char rx_snapshot[220];  /* match tcp_echo_client.c's LAST_RX_SNAPSHOT_SIZE */
           if (tcp_echo_client_take_last_rx(rx_snapshot, sizeof(rx_snapshot)) > 0U)
           {
+            diag_cpu_begin(DIAG_SECT_TFT);
             TFT_App_ShowReceived(rx_snapshot);
+            diag_cpu_end(DIAG_SECT_TFT);
           }
         }
       }
