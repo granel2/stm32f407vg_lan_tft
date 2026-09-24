@@ -219,9 +219,106 @@ int main(void)
     ethernetif_poll_link(&gnetif);
     sys_check_timeouts();
 
+    /* DHCP fallback: in DHCP mode, if the link is up but no DHCP server has
+       answered within DHCP_FALLBACK_MS, take the configured static IP ("IP
+       по умолчанию", see device_config_fallback_addr()) so a PC can still
+       reach the web page - e.g. module cabled straight to a PC, no router.
+       While on the fallback address DHCP keeps trying: dhcp_start() is
+       re-armed every DHCP_RETRY_MS (the client's own backoff alone was seen
+       to never bind again), and a lease simply replaces the fallback
+       address (dhcp_bind() -> netif_set_addr()).
+       Reboot escalation: on this board DHCP sometimes can't succeed after a
+       cold power-on until the MCU is rebooted (see the "no IP" watchdog
+       below and docs/PROJECT_GUIDE.md) - seen again here: stuck on the
+       default IP for 10+ minutes behind a working router, one soft reset
+       and the lease came at once. So if there is still no lease after
+       DHCP_FALLBACK_REBOOT_MS on the default IP and nobody is using that
+       address (no web page / port 7000 request since the fallback, or none
+       for CONFIG_IDLE_MS), reboot. With a PC cabled straight to the module
+       the page is reachable in each window and opening it stops the reboots. */
+    #define DHCP_FALLBACK_MS        10000U
+    #define DHCP_RETRY_MS           30000U
+    #define DHCP_FALLBACK_REBOOT_MS 60000U
+    #define CONFIG_IDLE_MS          300000U
+    {
+      static uint8_t  dhcp_waiting = 0U;
+      static uint32_t dhcp_wait_since = 0U;
+      static uint32_t dhcp_last_retry = 0U;
+      static uint8_t  on_fallback = 0U;
+      static uint32_t fallback_since = 0U;
+
+      if (device_config_get()->use_static_ip != 0U)
+      {
+        dhcp_waiting = 0U;
+        on_fallback = 0U;
+      }
+      else if (!netif_is_link_up(&gnetif))
+      {
+        /* on_fallback deliberately kept: an ETH reset drops the link for a
+           moment, and restarting the reboot timer on every one of those
+           kept the module on the default IP for 5 minutes. */
+        dhcp_waiting = 0U;
+      }
+      else if (ip4_addr_isany_val(*netif_ip4_addr(&gnetif)))
+      {
+        if (dhcp_waiting == 0U)
+        {
+          dhcp_waiting = 1U;
+          dhcp_wait_since = HAL_GetTick();
+        }
+        else if ((HAL_GetTick() - dhcp_wait_since) >= DHCP_FALLBACK_MS)
+        {
+          uint8_t a[4], m[4], g[4];
+          ip4_addr_t ipaddr, netmask, gw;
+
+          device_config_fallback_addr(a, m, g);
+          IP4_ADDR(&ipaddr,  a[0], a[1], a[2], a[3]);
+          IP4_ADDR(&netmask, m[0], m[1], m[2], m[3]);
+          IP4_ADDR(&gw,      g[0], g[1], g[2], g[3]);
+          netif_set_addr(&gnetif, &ipaddr, &netmask, &gw);
+          Debug_Print("[lwip] no DHCP answer, using default IP\r\n");
+          dhcp_waiting = 0U;
+          dhcp_last_retry = HAL_GetTick();
+          on_fallback = 1U;
+          fallback_since = HAL_GetTick();
+        }
+      }
+      else
+      {
+        dhcp_waiting = 0U;
+        if (dhcp_supplied_address(&gnetif))
+        {
+          on_fallback = 0U;
+        }
+        else if (netif_is_up(&gnetif) && ((HAL_GetTick() - dhcp_last_retry) >= DHCP_RETRY_MS))
+        {
+          dhcp_last_retry = HAL_GetTick();
+          dhcp_start(&gnetif);
+          Debug_Print("[lwip] on default IP, retrying DHCP\r\n");
+        }
+
+        if ((on_fallback != 0U) && ((HAL_GetTick() - fallback_since) >= DHCP_FALLBACK_REBOOT_MS))
+        {
+          const uint32_t acc = device_config_last_access();
+          const uint8_t  in_use = (uint8_t)((acc != 0U) && ((int32_t)(acc - fallback_since) >= 0) &&
+                                  ((HAL_GetTick() - acc) < CONFIG_IDLE_MS));
+          if (in_use == 0U)
+          {
+            Debug_Print("[lwip] still no DHCP lease on default IP, rebooting MCU\r\n");
+            HAL_Delay(50); /* let the UART finish transmitting before reset */
+            NVIC_SystemReset();
+          }
+        }
+      }
+    }
+
     /* Only talk to the server once we actually have an IP (DHCP-assigned). */
     {
       uint8_t has_ip = (netif_is_up(&gnetif) && !ip4_addr_isany_val(*netif_ip4_addr(&gnetif))) ? 1U : 0U;
+      /* Where the IP came from, for the DHCP: row: 'S' static mode,
+         'D' DHCP lease, 'F' default IP after DHCP timeout, '-' none yet. */
+      char ip_src = (device_config_get()->use_static_ip != 0U) ? 'S' :
+                    dhcp_supplied_address(&gnetif) ? 'D' : has_ip ? 'F' : '-';
 
       /* Feed the TFT status screen the same state this block already needs
          anyway - see tft_app.h for the ip_str/link_up/tcp_state contract.
@@ -229,9 +326,12 @@ int main(void)
          calling it every loop iteration here is cheap. */
       TFT_App_AlivePoll(has_ip ? ip4addr_ntoa(netif_ip4_addr(&gnetif)) : "---",
                         netif_is_link_up(&gnetif) ? 1U : 0U,
+                        ip_src,
                         tcp_echo_client_state_char());
 
-      if (has_ip)
+      /* On the default IP there is no route to the TCP server anyway, and the
+         client's failed connects would only trigger ETH resets. */
+      if (has_ip && (ip_src != 'F'))
       {
         tcp_echo_client_poll();
 

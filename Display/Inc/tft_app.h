@@ -85,7 +85,7 @@ void TFT_App_UpdateInfo(const char *server_str, const char *device_name);
   *         main-loop iteration - see tft_app.c for the parameter contract
   *         (in particular, ip_str == "---" means "no address yet").
   */
-void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state);
+void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tcp_state);
 
 /**
   * @brief  Shows `text` below the status screen's LAST MSG: label for 2 s

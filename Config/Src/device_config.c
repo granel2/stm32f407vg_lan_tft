@@ -33,9 +33,19 @@
 #define DEFAULT_SERVER_IP3  16U
 #define DEFAULT_SERVER_PORT 5000U
 #define DEFAULT_NAME        "stm32f407"
+/* Static IP / "IP по умолчанию": used in static mode, and in DHCP mode as the
+   fallback address when no DHCP server answers (see main.c). */
+#define DEFAULT_STATIC_IP   {192U, 168U, 1U, 100U}
+#define DEFAULT_NETMASK     {255U, 255U, 255U, 0U}
+#define DEFAULT_GATEWAY     {192U, 168U, 1U, 1U}
+
+static const uint8_t k_default_ip[4]   = DEFAULT_STATIC_IP;
+static const uint8_t k_default_mask[4] = DEFAULT_NETMASK;
+static const uint8_t k_default_gw[4]   = DEFAULT_GATEWAY;
 
 static DeviceConfig s_config;
 static uint32_t     s_revision;
+static uint32_t     s_last_access;
 
 /* Standalone reflected CRC-32 (poly 0xEDB88320, init/final XOR
    0xFFFFFFFF) - identical algorithm to Display/Src/tft_app.c's
@@ -74,18 +84,23 @@ static void set_defaults(DeviceConfig *cfg)
   cfg->server_port  = DEFAULT_SERVER_PORT;
   snprintf(cfg->name, sizeof(cfg->name), DEFAULT_NAME);
   cfg->use_static_ip = 0U;
-  /* static_ip/static_netmask/static_gw left zeroed - unused while
-     use_static_ip == 0, and 0.0.0.0 is an obvious "not set" if printed
-     before ever being configured. */
+  memcpy(cfg->static_ip,      k_default_ip,   4U);
+  memcpy(cfg->static_netmask, k_default_mask, 4U);
+  memcpy(cfg->static_gw,      k_default_gw,   4U);
+}
+
+static uint8_t flash_config_valid(const DeviceConfig *cfg)
+{
+  return ((cfg->magic == DEVICE_CONFIG_MAGIC) &&
+          (cfg->version == DEVICE_CONFIG_VERSION) &&
+          (config_crc(cfg) == cfg->crc32)) ? 1U : 0U;
 }
 
 void device_config_load(void)
 {
   const DeviceConfig *flash_cfg = (const DeviceConfig *)(const void *)DEVICE_CONFIG_FLASH_ADDR;
 
-  if ((flash_cfg->magic == DEVICE_CONFIG_MAGIC) &&
-      (flash_cfg->version == DEVICE_CONFIG_VERSION) &&
-      (config_crc(flash_cfg) == flash_cfg->crc32))
+  if (flash_config_valid(flash_cfg) != 0U)
   {
     memcpy(&s_config, flash_cfg, sizeof(s_config));
   }
@@ -100,8 +115,9 @@ DeviceConfig *device_config_get(void)
   return &s_config;
 }
 
-uint8_t device_config_save(void)
+uint8_t device_config_store(const DeviceConfig *cfg)
 {
+  DeviceConfig img = *cfg;
   FLASH_EraseInitTypeDef erase = {0};
   uint32_t sector_error = 0;
   HAL_StatusTypeDef status;
@@ -109,7 +125,9 @@ uint8_t device_config_save(void)
   uint32_t addr;
   uint32_t words;
 
-  s_config.crc32 = config_crc(&s_config);
+  img.magic   = DEVICE_CONFIG_MAGIC;
+  img.version = DEVICE_CONFIG_VERSION;
+  img.crc32   = config_crc(&img);
 
   HAL_FLASH_Unlock();
   __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
@@ -130,9 +148,9 @@ uint8_t device_config_save(void)
        and sizeof(DeviceConfig) is a multiple of 4 (its last member is a
        uint32_t, and C struct padding rounds the whole size up to its
        strictest member's alignment) - no partial-word tail to handle. */
-    src   = (const uint32_t *)(const void *)&s_config;
+    src   = (const uint32_t *)(const void *)&img;
     addr  = DEVICE_CONFIG_FLASH_ADDR;
-    words = sizeof(s_config) / 4U;
+    words = sizeof(img) / 4U;
 
     for (uint32_t i = 0; (i < words) && (status == HAL_OK); i++)
     {
@@ -142,11 +160,47 @@ uint8_t device_config_save(void)
   }
 
   HAL_FLASH_Lock();
-  if (status == HAL_OK)
-  {
-    s_revision++;
-  }
   return (status == HAL_OK) ? 1U : 0U;
+}
+
+uint8_t device_config_save(void)
+{
+  if (device_config_store(&s_config) == 0U) { return 0U; }
+  s_config.crc32 = config_crc(&s_config);
+  s_revision++;
+  return 1U;
+}
+
+const DeviceConfig *device_config_stored(void)
+{
+  const DeviceConfig *flash_cfg = (const DeviceConfig *)(const void *)DEVICE_CONFIG_FLASH_ADDR;
+  return (flash_config_valid(flash_cfg) != 0U) ? flash_cfg : NULL;
+}
+
+void device_config_fallback_addr(uint8_t ip[4], uint8_t mask[4], uint8_t gw[4])
+{
+  /* Configs saved by older firmware have 0.0.0.0 here (static fields used
+     to default to zero) - use the compiled-in default in that case. */
+  const uint8_t use_cfg = ((s_config.static_ip[0] | s_config.static_ip[1] |
+                            s_config.static_ip[2] | s_config.static_ip[3]) != 0U) &&
+                          ((s_config.static_netmask[0] | s_config.static_netmask[1] |
+                            s_config.static_netmask[2] | s_config.static_netmask[3]) != 0U);
+
+  memcpy(ip,   use_cfg ? s_config.static_ip      : k_default_ip,   4U);
+  memcpy(mask, use_cfg ? s_config.static_netmask : k_default_mask, 4U);
+  memcpy(gw,   use_cfg ? s_config.static_gw      : k_default_gw,   4U);
+}
+
+
+
+void device_config_touch(void)
+{
+  s_last_access = HAL_GetTick() | 1U;   /* never 0 - 0 means "never" */
+}
+
+uint32_t device_config_last_access(void)
+{
+  return s_last_access;
 }
 
 uint32_t device_config_revision(void)

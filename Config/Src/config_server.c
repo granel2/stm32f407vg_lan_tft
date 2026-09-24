@@ -184,6 +184,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
   LWIP_UNUSED_ARG(arg);
 
   if (err != ERR_OK) { if (p != NULL) { pbuf_free(p); } return err; }
+  device_config_touch();
 
   if (p == NULL)
   {
@@ -248,6 +249,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
     return ERR_OK;
   }
 
+  device_config_touch();
   s_active_pcb = newpcb;
   s_line_pos   = 0U;
   tcp_arg(newpcb, NULL);

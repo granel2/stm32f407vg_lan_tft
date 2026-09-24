@@ -23,7 +23,7 @@ main.c
   │  TFT_App_GPIO_Init()                        — сразу после MX_GPIO_Init(), до всего остального
   │  TFT_App_SPI3_Init()                       ─┐  один раз при старте, до MX_LWIP_Init() —
   │  TFT_App_SmokeTest()                       ─┘  блокирующие HAL_Delay() не должны стопорить DHCP/ETH
-  │  TFT_App_AlivePoll(ip_str, link_up, tcp)   — каждую итерацию while(1), сам ограничивает себя 1 Гц;
+  │  TFT_App_AlivePoll(ip_str, link_up, ip_src, tcp)   — каждую итерацию while(1), сам ограничивает себя 1 Гц;
   │                                               main.c передаёт то же состояние netif/TCP, что уже
   │                                               считает для UART-heartbeat
   ▼

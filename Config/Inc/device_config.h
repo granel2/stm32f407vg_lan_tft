@@ -39,7 +39,9 @@ typedef struct
                                    the SETUP page and usable as a short
                                    human identifier alongside the CRC32 chip
                                    ID (see Display/README.md) */
-  uint8_t  use_static_ip;      /* 0 = DHCP (default), 1 = use static_* below */
+  uint8_t  use_static_ip;      /* 0 = DHCP (default), 1 = use static_* below.
+                                   In DHCP mode static_* is also the fallback
+                                   address when no DHCP server answers */
   uint8_t  static_ip[4];
   uint8_t  static_netmask[4];
   uint8_t  static_gw[4];
@@ -79,6 +81,38 @@ DeviceConfig *device_config_get(void);
   * @retval 1 on success, 0 if the erase or any word program failed.
   */
 uint8_t device_config_save(void);
+
+/**
+  * @brief  Writes `cfg` to Flash *without* touching the in-RAM working copy
+  *         or device_config_revision() - i.e. "save now, takes effect at the
+  *         next boot" (the web page's Save button). Same blocking erase as
+  *         device_config_save(). magic/version/crc32 are filled in here.
+  * @retval 1 on success, 0 on a Flash error.
+  */
+uint8_t device_config_store(const DeviceConfig *cfg);
+
+/**
+  * @brief  The config currently saved in Flash (what the next boot will
+  *         load), or NULL if Flash holds no valid config. May differ from
+  *         device_config_get() after a device_config_store().
+  */
+const DeviceConfig *device_config_stored(void);
+
+/**
+  * @brief  Address to use in DHCP mode when no DHCP server answers: the
+  *         static_ip/netmask/gateway fields, or compiled-in defaults
+  *         (192.168.1.100/24, gw 192.168.1.1) if those are still 0.0.0.0.
+  */
+void device_config_fallback_addr(uint8_t ip[4], uint8_t mask[4], uint8_t gw[4]);
+
+/**
+  * @brief  Config front ends (web page, port 7000) call device_config_touch()
+  *         on every request/connection; device_config_last_access() returns
+  *         the HAL tick of the last one, 0 = never since boot. main.c uses it
+  *         to not reboot a module someone is configuring over its default IP.
+  */
+void     device_config_touch(void);
+uint32_t device_config_last_access(void);
 
 /**
   * @brief  Increments on every successful device_config_save() (starts at 0

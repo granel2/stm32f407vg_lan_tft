@@ -16,6 +16,7 @@
 #include "lwip/netif.h"
 #include "lwip/memp.h"
 #include "lwip/stats.h"
+#include "lwip/etharp.h"
 #include "ethernetif.h"
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
@@ -180,6 +181,27 @@ static err_t on_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
   return ERR_OK;
 }
 
+/* 1 if the ARP table holds a resolved entry for the server (on-link) or
+   for the gateway (off-link): an ARP reply came back, so the NIC's TX and
+   RX both work and a failed connect means "server not listening / port
+   filtered", not a wedged ETH DMA ring. Resetting ETH in that case only
+   hurts - after ethernetif_reset() DHCP often never binds again, and the
+   module ended up on its default IP with the router right there. */
+static uint8_t network_path_alive(void)
+{
+  const DeviceConfig *cfg = device_config_get();
+  struct eth_addr    *eth_ret;
+  const ip4_addr_t   *ip_ret;
+  ip4_addr_t          target;
+
+  IP4_ADDR(&target, cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3]);
+  if (!ip4_addr_netcmp(&target, netif_ip4_addr(&gnetif), netif_ip4_netmask(&gnetif)))
+  {
+    ip4_addr_copy(target, *netif_ip4_gw(&gnetif));
+  }
+  return (etharp_find_addr(&gnetif, &target, &eth_ret, &ip_ret) >= 0) ? 1U : 0U;
+}
+
 static void on_err(void *arg, err_t err)
 {
   /* PCB already freed by lwIP when this callback fires — do NOT touch s_pcb. */
@@ -189,7 +211,11 @@ static void on_err(void *arg, err_t err)
 
   /* Only count failures of attempts to *establish* a connection. A drop
      of an already-working connection is normal life, not a wedged NIC. */
-  if (s_state == ECHO_STATE_CONNECTING)
+  if ((s_state == ECHO_STATE_CONNECTING) && (network_path_alive() != 0U))
+  {
+    s_fail_count = 0;
+  }
+  else if (s_state == ECHO_STATE_CONNECTING)
   {
     s_fail_count++;
     if (s_fail_count >= ETH_RESET_AFTER_FAILS)

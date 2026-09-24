@@ -542,13 +542,16 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
   *                    the literal string "---" if none has been assigned
   *                    yet (link down, or DHCP still in progress).
   * @param  link_up    Non-zero if the PHY reports link up.
+  * @param  ip_src     Where the IP came from (DHCP: row): 'D' DHCP lease,
+  *                    'S' static mode, 'F' default IP because no DHCP
+  *                    server answered, anything else = none yet.
   * @param  tcp_state  tcp_echo_client_state_char() passthrough: 'I' = idle
   *                    (about to retry), 'C' = connecting, 'E' = connected.
   *                    Any other value is shown as IDLE, so a future state
   *                    code added to tcp_echo_client.c fails safe here
   *                    instead of printing a raw letter.
   */
-void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state)
+void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tcp_state)
 {
   static uint32_t next_tick = 0;
   const uint8_t   has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
@@ -588,7 +591,10 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char tcp_state)
   if (s_page == TFT_PAGE_SETUP)
   {
     status_draw_value(STATUS_Y_LINK, link_up ? "UP" : "DOWN");
-    status_draw_value(STATUS_Y_DHCP, !link_up ? "---" : has_ip ? "OK" : "WAITING");
+    status_draw_value(STATUS_Y_DHCP, !link_up        ? "---"          :
+                                      (ip_src == 'S') ? "OFF (STATIC)" :
+                                      !has_ip         ? "WAITING"      :
+                                      (ip_src == 'F') ? "NO-DEFAULT IP" : "OK");
     status_draw_value(STATUS_Y_IP,   ip_str);
     status_draw_value(STATUS_Y_TCP,  (tcp_state == 'C') ? "CONNECTING" :
                                       (tcp_state == 'E') ? "CONNECTED"  : "IDLE");

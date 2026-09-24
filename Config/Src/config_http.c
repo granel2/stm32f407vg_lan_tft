@@ -2,9 +2,12 @@
   ******************************************************************************
   * @file    config_http.c
   * @brief   See config_http.h. Minimal HTTP/1.0 server on lwIP's raw API:
-  *            GET /                 - settings form, pre-filled
-  *            GET /save?name=...    - validate all fields, apply, persist
-  *            GET /reboot           - "Rebooting..." page, then reset
+  *            GET /                 - settings table: parameter | example |
+  *                                    current value | new value (input)
+  *            GET /apply?act=save   - validate the non-empty inputs, write
+  *                                    to Flash; active after next restart
+  *            GET /apply?act=cancel - nothing written, table re-shown
+  *            GET /apply?act=restart- as save, then reboot the module
   *            anything else         - 404
   *
   *          The form uses method="get", so everything the server needs is in
@@ -24,6 +27,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
+#include "lwip/dhcp.h"
 
 #include "main.h"
 #include <stdarg.h>
@@ -33,7 +37,7 @@
 
 #define CONFIG_HTTP_PORT     80U
 #define HTTP_REQ_BUF         512U
-#define HTTP_PAGE_BUF        3072U
+#define HTTP_PAGE_BUF        6144U
 #define HTTP_REBOOT_DELAY_MS 500U
 
 static char     s_page[HTTP_PAGE_BUF];  /* shared: single-threaded (NO_SYS), and every
@@ -52,7 +56,7 @@ static void page_reset(void)
 
 /* Appends to s_page; silently stops at the buffer end (a truncated page is
    still valid enough HTML to see that something went wrong, and
-   HTTP_PAGE_BUF has ~1 KB of headroom over the real page size). */
+   HTTP_PAGE_BUF has ~2 KB of headroom over the real page size). */
 static void page_add(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void page_add(const char *fmt, ...)
 {
@@ -209,33 +213,199 @@ static void send_and_close(struct tcp_pcb *tpcb, const char *status, const char 
   }
 }
 
+/* ---------- settings table ------------------------------------------------ */
+
+/* One row of the table. Drives rendering (label/example/current value) and
+   parsing (key = the input's name= in the query string) from one place, so
+   adding a setting means one line here plus a case in field_format() and
+   field_parse(). */
+typedef enum
+{
+  FIELD_NAME = 0,
+  FIELD_SERVER_IP,
+  FIELD_SERVER_PORT,
+  FIELD_IP_MODE,
+  FIELD_STATIC_IP,
+  FIELD_NETMASK,
+  FIELD_GATEWAY,
+  FIELD_COUNT
+} FieldId;
+
+typedef struct
+{
+  const char *key;
+  const char *label;
+  const char *example;
+} FieldDesc;
+
+static const FieldDesc k_fields[FIELD_COUNT] =
+{
+  [FIELD_NAME]        = { "name",  "Имя устройства",                "room-3" },
+  [FIELD_SERVER_IP]   = { "sip",   "IP TCP-сервера",                "10.0.1.16" },
+  [FIELD_SERVER_PORT] = { "sport", "Порт TCP-сервера",              "5000" },
+  [FIELD_IP_MODE]     = { "mode",  "Режим IP",                      "DHCP / STATIC" },
+  [FIELD_STATIC_IP]   = { "ip",    "Статический IP / IP по умолчанию", "192.168.1.100" },
+  [FIELD_NETMASK]     = { "mask",  "Маска подсети",                 "255.255.255.0" },
+  [FIELD_GATEWAY]     = { "gw",    "Шлюз",                          "192.168.1.1" },
+};
+
+/* Value of one field as shown in the "current" column (not HTML-escaped). */
+static void field_format(const DeviceConfig *cfg, FieldId f, char *out, size_t out_size)
+{
+  const uint8_t *ip = NULL;
+
+  switch (f)
+  {
+    case FIELD_NAME:        snprintf(out, out_size, "%s", cfg->name); return;
+    case FIELD_SERVER_PORT: snprintf(out, out_size, "%u", cfg->server_port); return;
+    case FIELD_IP_MODE:     snprintf(out, out_size, "%s", (cfg->use_static_ip != 0U) ? "STATIC" : "DHCP"); return;
+    case FIELD_SERVER_IP:   ip = cfg->server_ip;      break;
+    case FIELD_STATIC_IP:   ip = cfg->static_ip;      break;
+    case FIELD_NETMASK:     ip = cfg->static_netmask; break;
+    case FIELD_GATEWAY:     ip = cfg->static_gw;      break;
+    default:                out[0] = '\0'; return;
+  }
+  snprintf(out, out_size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+}
+
+/* Parses one non-empty input into cfg. Returns NULL or the error text. */
+static const char *field_parse(DeviceConfig *cfg, FieldId f, const char *val)
+{
+  switch (f)
+  {
+    case FIELD_NAME:
+      if (strlen(val) >= sizeof(cfg->name)) { return "Имя устройства: не длиннее 23 символов (латиница/цифры)."; }
+      snprintf(cfg->name, sizeof(cfg->name), "%s", val);
+      return NULL;
+
+    case FIELD_SERVER_PORT:
+    {
+      char *end;
+      unsigned long port = strtoul(val, &end, 10);
+      if ((end == val) || (*end != '\0') || (port == 0UL) || (port > 65535UL))
+      {
+        return "Порт TCP-сервера: число 1-65535.";
+      }
+      cfg->server_port = (uint16_t)port;
+      return NULL;
+    }
+
+    case FIELD_IP_MODE:
+      if      (strcmp(val, "dhcp")   == 0) { cfg->use_static_ip = 0U; }
+      else if (strcmp(val, "static") == 0) { cfg->use_static_ip = 1U; }
+      else { return "Режим IP: DHCP или STATIC."; }
+      return NULL;
+
+    case FIELD_SERVER_IP: return (parse_ipv4(val, cfg->server_ip)      != 0U) ? NULL : "IP TCP-сервера: нужен вид 10.0.1.16.";
+    case FIELD_STATIC_IP: return (parse_ipv4(val, cfg->static_ip)      != 0U) ? NULL : "Статический IP: нужен вид 192.168.1.100.";
+    case FIELD_NETMASK:   return (parse_ipv4(val, cfg->static_netmask) != 0U) ? NULL : "Маска: нужен вид 255.255.255.0.";
+    case FIELD_GATEWAY:   return (parse_ipv4(val, cfg->static_gw)      != 0U) ? NULL : "Шлюз: нужен вид 192.168.1.1.";
+    default:              return NULL;
+  }
+}
+
+/* What the next boot will run with: the Flash copy (it may already hold
+   changes saved earlier and still waiting for a restart), or the running
+   config if Flash has never been written. New inputs are applied on top
+   of this, so a second Save doesn't lose the first one's changes. */
+static void next_boot_config(DeviceConfig *out)
+{
+  const DeviceConfig *stored = device_config_stored();
+  *out = (stored != NULL) ? *stored : *device_config_get();
+}
+
+/* Applies every non-empty input over `cfg`. All-or-nothing from the
+   caller's point of view: on error the caller just discards `cfg`.
+   *changed = number of fields whose value actually differs afterwards. */
+static const char *apply_inputs(const char *query, DeviceConfig *cfg, uint8_t *changed)
+{
+  const DeviceConfig before = *cfg;
+  char val[64];
+
+  *changed = 0U;
+  for (uint8_t f = 0U; f < (uint8_t)FIELD_COUNT; f++)
+  {
+    char *v = val;
+    char *e;
+    const char *err;
+
+    (void)get_param(query, k_fields[f].key, val, sizeof(val));
+    while (*v == ' ') { v++; }                       /* trim - pasted values often */
+    e = v + strlen(v);                                /* carry stray spaces         */
+    while ((e > v) && (e[-1] == ' ')) { *--e = '\0'; }
+    if (*v == '\0') { continue; }                     /* empty = keep current value */
+
+    err = field_parse(cfg, (FieldId)f, v);
+    if (err != NULL) { return err; }
+  }
+
+  /* Whole-config check: static mode needs a usable address. (In DHCP mode
+     static_* is only the fallback address - still worth rejecting 0.0.0.0.) */
+  if (((cfg->static_ip[0] | cfg->static_ip[1] | cfg->static_ip[2] | cfg->static_ip[3]) == 0U) &&
+      (cfg->use_static_ip != 0U))
+  {
+    return "Режим STATIC: задайте статический IP.";
+  }
+  if (((cfg->static_netmask[0] | cfg->static_netmask[1] | cfg->static_netmask[2] | cfg->static_netmask[3]) == 0U) &&
+      (cfg->use_static_ip != 0U))
+  {
+    return "Режим STATIC: задайте маску подсети.";
+  }
+
+  for (uint8_t f = 0U; f < (uint8_t)FIELD_COUNT; f++)
+  {
+    char a[32], b[32];
+    field_format(&before, (FieldId)f, a, sizeof(a));
+    field_format(cfg,     (FieldId)f, b, sizeof(b));
+    if (strcmp(a, b) != 0) { (*changed)++; }
+  }
+  return NULL;
+}
+
 /* ---------- pages -------------------------------------------------------- */
 
-static void build_form(const char *notice, uint8_t notice_ok)
+static const char k_css[] =
+  "body{font-family:sans-serif;max-width:900px;margin:16px auto;padding:0 12px;color:#222}"
+  "h2{margin:0 0 4px}.info{color:#555;font-size:14px;margin:0 0 12px}"
+  ".wrap{overflow-x:auto}table{border-collapse:collapse;width:100%}"
+  "th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:middle;font-size:14px}"
+  "th{background:#eee}tr:nth-child(even) td{background:#fafafa}"
+  "td.ex{color:#888;font-family:monospace}td.cur{font-family:monospace;font-weight:bold}"
+  ".pend{color:#b36b00;font-weight:normal;font-size:12px}"
+  "input,select{width:100%;min-width:130px;padding:5px;font-size:15px;box-sizing:border-box}"
+  ".btns{margin-top:16px;display:flex;gap:12px;flex-wrap:wrap}"
+  "button{padding:9px 26px;font-size:16px;cursor:pointer}"
+  ".ok{background:#d4f7d4;padding:8px}.err{background:#f9d0d0;padding:8px}"
+  ".hint{font-size:12px;color:#888}";
+
+static void page_head(const char *title_esc)
 {
-  const DeviceConfig *cfg = device_config_get();
-  char name_esc[24 * 6];
-
-  html_escape(cfg->name, name_esc, sizeof(name_esc));
-
   page_reset();
   page_add("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-           "<title>%s</title><style>"
-           "body{font-family:sans-serif;max-width:420px;margin:16px auto;padding:0 12px}"
-           "label{display:block;margin-top:10px;font-size:14px;color:#555}"
-           "input,select{width:100%%;padding:6px;font-size:16px;box-sizing:border-box}"
-           "button{margin-top:16px;padding:8px 18px;font-size:16px}"
-           ".ok{background:#d4f7d4;padding:8px}.err{background:#f9d0d0;padding:8px}"
-           ".hint{font-size:12px;color:#888}"
-           "</style></head><body><h2>%s</h2>",
-           name_esc, name_esc);
+           "<title>%s</title><style>%s</style></head><body>", title_esc, k_css);
+}
+
+static void build_table(const char *notice, uint8_t notice_ok)
+{
+  const DeviceConfig *run = device_config_get();
+  DeviceConfig        next;
+  uint8_t             pending = 0U;
+  char                name_esc[24 * 6];
+
+  next_boot_config(&next);
+  html_escape(run->name, name_esc, sizeof(name_esc));
+
+  page_head(name_esc);
+  page_add("<h2>Настройки модуля «%s»</h2>", name_esc);
 
   if (netif_default != NULL)
   {
-    page_add("<p class=\"hint\">Текущий IP: %s (%s)</p>",
-             ip4addr_ntoa(netif_ip4_addr(netif_default)),
-             (cfg->use_static_ip != 0U) ? "статический" : "DHCP");
+    const char *src = (run->use_static_ip != 0U)             ? "статический" :
+                      dhcp_supplied_address(netif_default)   ? "получен по DHCP" :
+                      "IP по умолчанию - DHCP-сервер не ответил";
+    page_add("<p class=\"info\">IP модуля сейчас: <b>%s</b> (%s)</p>",
+             ip4addr_ntoa(netif_ip4_addr(netif_default)), src);
   }
 
   if (notice != NULL)
@@ -243,150 +413,142 @@ static void build_form(const char *notice, uint8_t notice_ok)
     page_add("<p class=\"%s\">%s</p>", (notice_ok != 0U) ? "ok" : "err", notice);
   }
 
-  page_add("<form action=\"/save\" method=\"get\">"
-           "<label>Имя устройства<input name=\"name\" maxlength=\"23\" value=\"%s\"></label>"
-           "<p class=\"hint\">Латиница/цифры - кириллицу экран модуля не отображает.</p>"
-           "<label>IP TCP-сервера<input name=\"sip\" value=\"%u.%u.%u.%u\"></label>"
-           "<label>Порт TCP-сервера<input name=\"sport\" value=\"%u\"></label>",
-           name_esc,
-           cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3],
-           cfg->server_port);
+  page_add("<form action=\"/apply\" method=\"get\"><div class=\"wrap\"><table>"
+           "<tr><th>Параметр</th><th>Образец записи</th><th>Текущее значение</th><th>Новое значение</th></tr>");
 
-  page_add("<label>Режим IP<select name=\"mode\">"
-           "<option value=\"dhcp\"%s>DHCP (автоматически)</option>"
-           "<option value=\"static\"%s>Статический</option></select></label>"
-           "<label>Статический IP<input name=\"ip\" value=\"%u.%u.%u.%u\"></label>"
-           "<label>Маска<input name=\"mask\" value=\"%u.%u.%u.%u\"></label>"
-           "<label>Шлюз<input name=\"gw\" value=\"%u.%u.%u.%u\"></label>"
-           "<p class=\"hint\">Статические поля используются только в режиме «Статический»."
-           " Смена режима/адреса IP вступает в силу после перезагрузки.</p>"
-           "<button type=\"submit\">Сохранить</button></form>"
-           "<form action=\"/reboot\" method=\"get\"><button type=\"submit\">Перезагрузить</button></form>"
-           "</body></html>",
-           (cfg->use_static_ip == 0U) ? " selected" : "",
-           (cfg->use_static_ip != 0U) ? " selected" : "",
-           cfg->static_ip[0], cfg->static_ip[1], cfg->static_ip[2], cfg->static_ip[3],
-           cfg->static_netmask[0], cfg->static_netmask[1], cfg->static_netmask[2], cfg->static_netmask[3],
-           cfg->static_gw[0], cfg->static_gw[1], cfg->static_gw[2], cfg->static_gw[3]);
+  for (uint8_t f = 0U; f < (uint8_t)FIELD_COUNT; f++)
+  {
+    char cur[32], nxt[32];
+    char cur_esc[32 * 6];
+
+    field_format(run,   (FieldId)f, cur, sizeof(cur));
+    field_format(&next, (FieldId)f, nxt, sizeof(nxt));
+    html_escape(cur, cur_esc, sizeof(cur_esc));
+
+    page_add("<tr><td>%s</td><td class=\"ex\">%s</td><td class=\"cur\">%s",
+             k_fields[f].label, k_fields[f].example, cur_esc);
+    if (strcmp(cur, nxt) != 0)
+    {
+      char nxt_esc[32 * 6];
+      html_escape(nxt, nxt_esc, sizeof(nxt_esc));
+      page_add("<br><span class=\"pend\">после рестарта: %s</span>", nxt_esc);
+      pending = 1U;
+    }
+    page_add("</td><td>");
+
+    if (f == (uint8_t)FIELD_IP_MODE)
+    {
+      page_add("<select name=\"mode\"><option value=\"\">- без изменений -</option>"
+               "<option value=\"dhcp\">DHCP</option><option value=\"static\">STATIC</option></select>");
+    }
+    else
+    {
+      page_add("<input name=\"%s\"%s autocomplete=\"off\">", k_fields[f].key,
+               (f == (uint8_t)FIELD_NAME) ? " maxlength=\"23\"" :
+               (f == (uint8_t)FIELD_SERVER_PORT) ? " inputmode=\"numeric\"" : "");
+    }
+    page_add("</td></tr>");
+  }
+
+  page_add("</table></div>"
+           "<p class=\"hint\">Пустое поле - значение не меняется. "
+           "Статический IP в режиме DHCP используется как IP по умолчанию, "
+           "если DHCP-сервер не ответил за 10 с. Имя - латиница/цифры (экран кириллицу не показывает).</p>");
+  if (pending != 0U)
+  {
+    page_add("<p class=\"pend\">Есть сохранённые изменения - они вступят в силу после рестарта.</p>");
+  }
+  page_add("<div class=\"btns\">"
+           "<button type=\"submit\" name=\"act\" value=\"save\">Save</button>"
+           "<button type=\"submit\" name=\"act\" value=\"cancel\">Cancel</button>"
+           "<button type=\"submit\" name=\"act\" value=\"restart\""
+           " onclick=\"return confirm('Записать новые значения и перезапустить модуль?')\">Restart</button>"
+           "</div>"
+           "<p class=\"hint\">Save - записать в модуль, применить после следующего рестарта. "
+           "Cancel - выйти без изменений. Restart - записать и сразу перезапустить.</p>"
+           "</form>");
+  /* After /apply?... put "/" back in the address bar, so F5 just reloads
+     the table instead of re-submitting Save/Restart. */
+  if (notice != NULL)
+  {
+    page_add("<script>history.replaceState(null,'','/')</script>");
+  }
+  page_add("</body></html>");
 }
 
-/* Validates *every* field before touching the live config - either the whole
-   submit is applied and saved, or nothing is (and the form comes back with
-   the reason, still showing the old values). */
-static void handle_save(struct tcp_pcb *tpcb, const char *query)
+static void send_restart_page(struct tcp_pcb *tpcb, const DeviceConfig *next)
 {
-  DeviceConfig *cfg = device_config_get();
-  DeviceConfig  tmp = *cfg;
-  char          val[64];
-  const char   *error = NULL;
-  uint8_t       reboot_needed;
+  char url[32] = "/";
 
-  if (get_param(query, "name", val, sizeof(val)) != 0U)
+  /* Static mode after the restart: the address is known, send the browser
+     there. DHCP: most routers hand the same lease back, so stay on "/". */
+  if (next->use_static_ip != 0U)
   {
-    if (val[0] == '\0') { error = "Имя не может быть пустым."; }
-    else
-    {
-      #pragma GCC diagnostic push
-      #pragma GCC diagnostic ignored "-Wformat-truncation"
-      snprintf(tmp.name, sizeof(tmp.name), "%s", val);  /* >23 chars: truncated, by design */
-      #pragma GCC diagnostic pop
-    }
+    snprintf(url, sizeof(url), "http://%u.%u.%u.%u/",
+             next->static_ip[0], next->static_ip[1], next->static_ip[2], next->static_ip[3]);
   }
 
-  if ((error == NULL) && (get_param(query, "sip", val, sizeof(val)) != 0U) &&
-      (parse_ipv4(val, tmp.server_ip) == 0U))
-  {
-    error = "Неверный IP TCP-сервера (нужно вида 10.0.1.16).";
-  }
+  page_head("Restart");
+  page_add("<meta http-equiv=\"refresh\" content=\"12;url=%s\">"
+           "<h3>Перезапуск модуля...</h3>"
+           "<p>Страница откроется сама через ~12 с: <a href=\"%s\">%s</a>.</p>"
+           "<p class=\"hint\">Если адрес не открылся - посмотрите IP на экране модуля "
+           "(строка IP:). Без DHCP-сервера модуль через 10 с берёт IP по умолчанию.</p>"
+           "</body></html>", url, url, url);
+  send_and_close(tpcb, "200 OK", s_page, s_page_len);
+  Debug_Print("[http] restart requested from web page\r\n");
+  s_reboot_at = HAL_GetTick() + HTTP_REBOOT_DELAY_MS;
+  s_reboot_pending = 1U;
+}
 
-  if ((error == NULL) && (get_param(query, "sport", val, sizeof(val)) != 0U))
-  {
-    char *end;
-    unsigned long port = strtoul(val, &end, 10);
-    if ((end == val) || (*end != '\0') || (port == 0UL) || (port > 65535UL))
-    {
-      error = "Неверный порт TCP-сервера (1-65535).";
-    }
-    else
-    {
-      tmp.server_port = (uint16_t)port;
-    }
-  }
+/* /apply?act=save|cancel|restart&name=...&sip=...  (one form, three buttons)
+     save    - validate, write to Flash, running config untouched: takes
+               effect at the next restart
+     cancel  - nothing written, table re-shown
+     restart - as save, then reboot (with no new values: just reboot) */
+static void handle_apply(struct tcp_pcb *tpcb, const char *query)
+{
+  DeviceConfig next;
+  char         act[16];
+  const char  *error;
+  uint8_t      changed = 0U;
 
-  if ((error == NULL) && (get_param(query, "mode", val, sizeof(val)) != 0U))
-  {
-    tmp.use_static_ip = (strcmp(val, "static") == 0) ? 1U : 0U;
-  }
+  (void)get_param(query, "act", act, sizeof(act));
 
-  if (error == NULL)
+  if (strcmp(act, "cancel") == 0)
   {
-    /* Static fields: required (and validated) in static mode; in DHCP mode
-       they're kept if valid and silently left as-is if not, so switching
-       modes back and forth doesn't lose what was typed. */
-    uint8_t ip[4], mask[4], gw[4];
-    uint8_t ip_ok   = (get_param(query, "ip",   val, sizeof(val)) != 0U) && (parse_ipv4(val, ip)   != 0U);
-    uint8_t mask_ok = (get_param(query, "mask", val, sizeof(val)) != 0U) && (parse_ipv4(val, mask) != 0U);
-    uint8_t gw_ok   = (get_param(query, "gw",   val, sizeof(val)) != 0U) && (parse_ipv4(val, gw)   != 0U);
-
-    if (tmp.use_static_ip != 0U)
-    {
-      if (!ip_ok || ((ip[0] | ip[1] | ip[2] | ip[3]) == 0U)) { error = "Неверный статический IP."; }
-      else if (!mask_ok || ((mask[0] | mask[1] | mask[2] | mask[3]) == 0U)) { error = "Неверная маска (например 255.255.255.0)."; }
-      else if (!gw_ok)   { error = "Неверный шлюз."; }
-    }
-    if (error == NULL)
-    {
-      if (ip_ok)   { memcpy(tmp.static_ip,      ip,   4U); }
-      if (mask_ok) { memcpy(tmp.static_netmask, mask, 4U); }
-      if (gw_ok)   { memcpy(tmp.static_gw,      gw,   4U); }
-    }
-  }
-
-  if (error != NULL)
-  {
-    build_form(error, 0U);
+    build_table("Отменено - ничего не изменено.", 1U);
     send_and_close(tpcb, "200 OK", s_page, s_page_len);
     return;
   }
 
-  /* IP-mode/address changes only take effect at boot (MX_LWIP_Init()); the
-     server address and name apply straight away (main.c reacts to
-     device_config_revision()). */
-  reboot_needed = (uint8_t)((tmp.use_static_ip != cfg->use_static_ip) ||
-                            ((tmp.use_static_ip != 0U) &&
-                             ((memcmp(tmp.static_ip, cfg->static_ip, 4U) != 0) ||
-                              (memcmp(tmp.static_netmask, cfg->static_netmask, 4U) != 0) ||
-                              (memcmp(tmp.static_gw, cfg->static_gw, 4U) != 0))));
-
-  *cfg = tmp;
-  if (device_config_save() == 0U)
+  next_boot_config(&next);
+  error = apply_inputs(query, &next, &changed);
+  if (error != NULL)
   {
-    build_form("Ошибка записи во Flash - настройки не сохранены.", 0U);
+    build_table(error, 0U);   /* nothing written, nothing restarted */
+    send_and_close(tpcb, "200 OK", s_page, s_page_len);
+    return;
   }
-  else
-  {
-    Debug_Print("[http] settings saved from web page\r\n");
-    build_form((reboot_needed != 0U)
-               ? "Сохранено. Настройки IP вступят в силу после перезагрузки - нажмите «Перезагрузить»."
-               : "Сохранено и применено.", 1U);
-  }
-  send_and_close(tpcb, "200 OK", s_page, s_page_len);
-}
 
-static void handle_reboot(struct tcp_pcb *tpcb)
-{
-  page_reset();
-  page_add("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-           "<meta http-equiv=\"refresh\" content=\"12;url=/\">"
-           "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
-           "<body style=\"font-family:sans-serif;max-width:420px;margin:16px auto\">"
-           "<h3>Перезагрузка...</h3><p>Страница обновится сама через ~12 с (загрузка модуля"
-           " занимает около 10 с). Если IP-адрес менялся - откройте новый адрес вручную.</p>"
-           "</body></html>");
+  if ((changed != 0U) && (device_config_store(&next) == 0U))
+  {
+    build_table("Ошибка записи во Flash - настройки не сохранены.", 0U);
+    send_and_close(tpcb, "200 OK", s_page, s_page_len);
+    return;
+  }
+  if (changed != 0U) { Debug_Print("[http] settings saved from web page\r\n"); }
+
+  if (strcmp(act, "restart") == 0)
+  {
+    send_restart_page(tpcb, &next);
+    return;
+  }
+
+  build_table((changed != 0U)
+              ? "Сохранено в модуле. Новые значения начнут действовать после рестарта (кнопка Restart)."
+              : "Новых значений не введено - ничего не записано.", 1U);
   send_and_close(tpcb, "200 OK", s_page, s_page_len);
-  Debug_Print("[http] reboot requested from web page\r\n");
-  s_reboot_at = HAL_GetTick() + HTTP_REBOOT_DELAY_MS;
-  s_reboot_pending = 1U;
 }
 
 /* ---------- lwIP callbacks ------------------------------------------------ */
@@ -433,16 +595,12 @@ static err_t on_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 
   if (strcmp(path, "/") == 0)
   {
-    build_form(NULL, 0U);
+    build_table(NULL, 0U);
     send_and_close(tpcb, "200 OK", s_page, s_page_len);
   }
-  else if (strcmp(path, "/save") == 0)
+  else if (strcmp(path, "/apply") == 0)
   {
-    handle_save(tpcb, query);
-  }
-  else if (strcmp(path, "/reboot") == 0)
-  {
-    handle_reboot(tpcb);
+    handle_apply(tpcb, query);
   }
   else
   {
@@ -457,6 +615,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
   LWIP_UNUSED_ARG(arg);
   if ((err != ERR_OK) || (newpcb == NULL)) { return ERR_VAL; }
+  device_config_touch();
   tcp_recv(newpcb, on_recv);
   return ERR_OK;
 }
