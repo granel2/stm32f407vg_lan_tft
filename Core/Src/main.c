@@ -330,11 +330,11 @@ int main(void)
                     dhcp_supplied_address(&gnetif) ? 'D' : has_ip ? 'F' : '-';
 
       /* Feed the TFT status screen the same state this block already needs
-         anyway - see tft_app.h for the ip_str/link_up/tcp_state contract.
+         anyway - see tft_app.h for the ip_addr/link_up/tcp_state contract.
          TFT_App_AlivePoll() rate-limits itself to 1 Hz internally, so
          calling it every loop iteration here is cheap. */
       diag_cpu_begin(DIAG_SECT_TFT);
-      TFT_App_AlivePoll(has_ip ? ip4addr_ntoa(netif_ip4_addr(&gnetif)) : "---",
+      TFT_App_AlivePoll(has_ip ? ip4_addr_get_u32(netif_ip4_addr(&gnetif)) : 0U,
                         netif_is_link_up(&gnetif) ? 1U : 0U,
                         ip_src,
                         tcp_echo_client_state_char());

@@ -562,11 +562,11 @@ static uint8_t s_cpu_nrows;
    the page's last live row (nothing drawn), so the sweep stops.
    RECEIVED has no live rows (updated on arrival by TFT_App_ShowReceived());
    REMOTE/LOCAL are driven by Panel_Poll(). */
-static uint8_t refresh_live_row(uint8_t idx, const char *ip_str, uint8_t link_up, char ip_src, char tcp_state)
+static uint8_t refresh_live_row(uint8_t idx, uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_state)
 {
   if (s_page == TFT_PAGE_SETUP)
   {
-    const uint8_t has_ip = (strcmp(ip_str, "---") != 0) ? 1U : 0U;
+    const uint8_t has_ip = (ip_addr != 0U) ? 1U : 0U;
 
     switch (idx)
     {
@@ -580,8 +580,23 @@ static uint8_t refresh_live_row(uint8_t idx, const char *ip_str, uint8_t link_up
                                           (ip_src == 'F') ? "NO-DEFAULT IP" : "OK");
         return 1U;
       case 2:
+      {
+        /* Formatted here, once a second - not by the caller on every
+           main-loop pass (Diag/ showed that costing ~30% of the loop). */
+        char ip_str[16];
+        if (has_ip)
+        {
+          snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                   (unsigned)(ip_addr & 0xFFU), (unsigned)((ip_addr >> 8) & 0xFFU),
+                   (unsigned)((ip_addr >> 16) & 0xFFU), (unsigned)(ip_addr >> 24));
+        }
+        else
+        {
+          snprintf(ip_str, sizeof(ip_str), "---");
+        }
         status_draw_value(STATUS_Y_IP, ip_str);
         return 1U;
+      }
       case 3:
         status_draw_value(STATUS_Y_TCP, (tcp_state == 'C') ? "CONNECTING" :
                                          (tcp_state == 'E') ? "CONNECTED"  : "IDLE");
@@ -616,9 +631,11 @@ static uint8_t refresh_live_row(uint8_t idx, const char *ip_str, uint8_t link_up
   *         main-loop iteration - the button check, the 1 Hz gate and the
   *         row sweep are all internal.
   *
-  * @param  ip_str    Current IPv4 address as text (e.g. "192.168.1.42"), or
-  *                    the literal string "---" if none has been assigned
-  *                    yet (link down, or DHCP still in progress).
+  * @param  ip_addr   Current IPv4 address as lwIP keeps it (ip4_addr_t.addr,
+  *                    network byte order: first octet in the lowest byte),
+  *                    or 0 if none has been assigned yet (link down, or
+  *                    DHCP still in progress). Passed as a number so the
+  *                    caller does no text formatting on every loop pass.
   * @param  link_up    Non-zero if the PHY reports link up.
   * @param  ip_src     Where the IP came from (DHCP: row): 'D' DHCP lease,
   *                    'S' static mode, 'F' default IP because no DHCP
@@ -629,7 +646,7 @@ static uint8_t refresh_live_row(uint8_t idx, const char *ip_str, uint8_t link_up
   *                    code added to tcp_echo_client.c fails safe here
   *                    instead of printing a raw letter.
   */
-void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tcp_state)
+void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_state)
 {
   static uint32_t next_tick = 0;
 
@@ -681,7 +698,7 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tc
 
   if (s_refresh_row != REFRESH_IDLE)
   {
-    s_refresh_row = refresh_live_row(s_refresh_row, ip_str, link_up, ip_src, tcp_state) ?
+    s_refresh_row = refresh_live_row(s_refresh_row, ip_addr, link_up, ip_src, tcp_state) ?
                     (uint8_t)(s_refresh_row + 1U) : REFRESH_IDLE;
   }
 }

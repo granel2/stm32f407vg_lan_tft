@@ -86,9 +86,9 @@ void TFT_App_UpdateInfo(const char *server_str, const char *device_name);
   *         status screen and toggles a heartbeat square; returns immediately
   *         the rest of the time. Safe (and required) to call every
   *         main-loop iteration - see tft_app.c for the parameter contract
-  *         (in particular, ip_str == "---" means "no address yet").
+  *         (in particular, ip_addr == 0 means "no address yet").
   */
-void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tcp_state);
+void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_state);
 
 /**
   * @brief  Shows `text` below the status screen's LAST MSG: label for 2 s
