@@ -424,6 +424,14 @@ int main(void)
           ip_missing_since = 0;
           reset_escalation_count = 0;
         }
+        else if (!g_eth_hw_failed && !netif_is_link_up(&gnetif))
+        {
+          /* Cable out: no IP is expected, not a stuck DHCP - resetting ETH
+             or rebooting can't help. Restart the clock once the link is
+             back. (Only reachable since ethernetif_poll_link() really sees
+             link-down; before that fix the netif never left LINK_UP.) */
+          ip_missing_since = 0;
+        }
         else if (ip_missing_since == 0)
         {
           ip_missing_since = HAL_GetTick();

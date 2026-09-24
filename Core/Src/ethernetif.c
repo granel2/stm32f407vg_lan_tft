@@ -906,7 +906,12 @@ void ethernetif_poll_link(struct netif *netif)
   /* Guard: if HAL_ETH_Init failed (e.g. RMII REF_CLK absent), EthHandle.gState
      is not READY and LAN8742.IO.ReadReg is NULL — calling GetLinkState would
      dereference NULL and trigger a UsageFault/HardFault. */
-  if (EthHandle.gState != HAL_ETH_STATE_READY)
+  /* READY = initialised but stopped (link down), STARTED = after
+     HAL_ETH_Start_IT() (link up). Checking READY alone skipped every poll
+     once the link had come up, so a pulled cable was never noticed: the
+     netif stayed LINK_UP with the last PHY state (phy=2) frozen in the
+     heartbeat, even with the RJ45 LEDs off. */
+  if ((EthHandle.gState != HAL_ETH_STATE_READY) && (EthHandle.gState != HAL_ETH_STATE_STARTED))
   {
     return;
   }
