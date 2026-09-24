@@ -98,11 +98,13 @@ ILI9488. Драйвер (`st7796s.c`) целиком написан под ST779
 
 | # | Страница | Что показывает |
 |---|---|---|
-| 1/3 | **SETUP** | `LINK / DHCP / IP / SERVER / TCP / UPTIME / FRAME / CHIP ID / NAME` |
-| 2/3 | **RECEIVED** | Последнее сообщение от TCP-сервера целиком, многострочно |
-| 3/3 | **PAGE 3** | Заглушка «RESERVED FOR FUTURE USE» — задел под следующую страницу |
+| 1/4 | **SETUP** | `LINK / DHCP / IP / SERVER / TCP / UPTIME / FRAME / CHIP ID / NAME` |
+| 2/4 | **RECEIVED** | Последнее сообщение от TCP-сервера целиком, многострочно |
+| 3/4 | **REMOTE** | Приборы с данными от сервера: 2 стрелочных, 3 цифровых, 2 ползунка, 4 лампы — модуль [`Panel/`](../Panel/README.md) |
+| 4/4 | **LOCAL** | Локальные приборы и органы управления: 3 столбика, стрелочный, цифровой, 4 кнопки, ползунок — [`Panel/`](../Panel/README.md) |
 
-Добавить 4-ю страницу: завести `TFT_PAGE_XXX` в `enum TFT_Page` (перед `TFT_PAGE_COUNT`,
+Пока реальных данных нет, REMOTE/LOCAL показывают **демо-анимацию** (внизу `SERVER: DEMO` /
+`LOCAL: DEMO`). Добавить ещё страницу: завести `TFT_PAGE_XXX` в `enum TFT_Page` (перед `TFT_PAGE_COUNT`,
 он посчитается сам), написать `draw_page_xxx_static(void)`, добавить `case` в
 `draw_page_static()`; если странице нужны поля, обновляющиеся раз в секунду — добавить
 `if (s_page == TFT_PAGE_XXX) { ... }` в `TFT_App_AlivePoll()` рядом с уже существующим

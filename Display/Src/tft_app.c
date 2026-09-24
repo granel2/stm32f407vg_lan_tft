@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "tft_app.h"
+#include "panel.h"
 #include "st7796s.h"
 #include "main.h"
 
@@ -105,9 +106,9 @@ void TFT_App_SPI3_Init(void)
  * Multi-page status screen (portrait, 320x480).
  *
  * Pages (TFT_Page): SETUP (link/DHCP/IP/server/TCP/uptime/frame-time),
- * RECEIVED (the full last TCP message, wrapped/multi-line), RESERVED (empty
- * placeholder - add real content here for a 4th page and bump
- * TFT_PAGE_COUNT). Cycled by a physical button on TFT_PAGEBTN_Pin
+ * RECEIVED (the full last TCP message, wrapped/multi-line), REMOTE and
+ * LOCAL (instrument pages - gauges, readouts, sliders, lamps, buttons - drawn
+ * by Panel/, see Panel/Inc/panel.h). Cycled by a physical button on TFT_PAGEBTN_Pin
  * (PC6/SV1.7, active low, internal pull-up - see TFT_App_GPIO_Init()).
  *
  * Every page shares: a title row (name + "n/N" page indicator, top-right)
@@ -121,7 +122,8 @@ typedef enum
 {
   TFT_PAGE_SETUP = 0,
   TFT_PAGE_RECEIVED,
-  TFT_PAGE_RESERVED,
+  TFT_PAGE_REMOTE,     /* Panel/ PANEL_PAGE_REMOTE */
+  TFT_PAGE_LOCAL,      /* Panel/ PANEL_PAGE_LOCAL  */
   TFT_PAGE_COUNT
 } TFT_Page;
 
@@ -207,9 +209,6 @@ static uint32_t stm32_uid_crc32(void)
                                      (STATUS_FONT_SCALE*7) so more rows fit */
 #define STATUS_Y_RX0       90U
 #define STATUS_RX_MAX_ROWS 18U    /* (STATUS_BLINK_Y - 20 - STATUS_Y_RX0) / STATUS_RX_ROW_H, rounded down */
-
-/* RESERVED page */
-#define STATUS_Y_RESERVED  60U
 
 /* Shared by every page */
 #define STATUS_BLINK_X     20U   /* 40x40 heartbeat square, toggles every second */
@@ -400,22 +399,22 @@ static void draw_page_received_static(void)
   }
 }
 
-static void draw_page_reserved_static(void)
-{
-  draw_page_chrome("PAGE 3", TFT_PAGE_RESERVED);
-  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_RESERVED, "(RESERVED FOR", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
-  ST7796S_DrawString(STATUS_LABEL_X, (uint16_t)(STATUS_Y_RESERVED + 30U), "FUTURE USE)", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
-}
-
-/* Add a case here (and bump TFT_PAGE_COUNT above) for a 4th+ page. */
+/* Add a case here (and a TFT_Page value above) for another page. */
 static void draw_page_static(TFT_Page page)
 {
   switch (page)
   {
     case TFT_PAGE_SETUP:    draw_page_setup_static();    break;
     case TFT_PAGE_RECEIVED: draw_page_received_static(); break;
-    case TFT_PAGE_RESERVED:
-    default:                draw_page_reserved_static(); break;
+    case TFT_PAGE_REMOTE:
+      draw_page_chrome("REMOTE", TFT_PAGE_REMOTE);
+      Panel_DrawPage(PANEL_PAGE_REMOTE);
+      break;
+    case TFT_PAGE_LOCAL:
+    default:
+      draw_page_chrome("LOCAL", TFT_PAGE_LOCAL);
+      Panel_DrawPage(PANEL_PAGE_LOCAL);
+      break;
   }
 }
 
@@ -579,6 +578,11 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tc
     }
   }
 
+  /* Instrument pages animate faster than the 1 Hz status refresh below -
+     Panel_Poll() paces itself (demo 10 Hz, one widget redraw per call). */
+  if (s_page == TFT_PAGE_REMOTE) { Panel_Poll(PANEL_PAGE_REMOTE); }
+  if (s_page == TFT_PAGE_LOCAL)  { Panel_Poll(PANEL_PAGE_LOCAL); }
+
   if ((int32_t)(HAL_GetTick() - next_tick) < 0)
   {
     return;
@@ -604,6 +608,6 @@ void TFT_App_AlivePoll(const char *ip_str, uint8_t link_up, char ip_src, char tc
       status_draw_value(STATUS_Y_UPTIME, msg);
     }
   }
-  /* RECEIVED and RESERVED have nothing that needs a 1 Hz refresh - RECEIVED
-     is updated on arrival by TFT_App_ShowReceived(), RESERVED is static. */
+  /* RECEIVED has nothing that needs a 1 Hz refresh (updated on arrival by
+     TFT_App_ShowReceived()); REMOTE/LOCAL are driven by Panel_Poll() above. */
 }
