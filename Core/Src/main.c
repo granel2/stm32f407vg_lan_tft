@@ -40,6 +40,7 @@
 #include "clock.h"
 #include "can_bus.h"
 #include "diag_can.h"
+#include "debug_uart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -134,6 +135,9 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* USART1 debug output through a DMA ring from here on - Debug_Print()
+     no longer blocks the main loop (see Core/Inc/debug_uart.h). */
+  debug_uart_init();
   /* Print the firmware build date/time on every boot (cold-boot or
      NVIC_SystemReset() escalation alike) so a pasted log can always be
      matched to the exact binary that produced it - __DATE__/__TIME__ are
@@ -780,7 +784,7 @@ static void netif_status_callback(struct netif *netif)
 
 void Debug_Print(const char *msg)
 {
-  HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)strlen(msg), 100);
+  debug_uart_write(msg, (uint32_t)strlen(msg));
 }
 
 /* USER CODE END 4 */

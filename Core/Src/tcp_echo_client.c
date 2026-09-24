@@ -18,6 +18,7 @@
 #include "lwip/stats.h"
 #include "lwip/etharp.h"
 #include "ethernetif.h"
+#include "debug_uart.h"
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
 #include <string.h>
@@ -86,10 +87,11 @@ static uint8_t  s_uart_line_ready;
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-/* Direct UART write, used for short diagnostic strings only. */
+/* Debug UART write - through the DMA ring (debug_uart.c), never a direct
+   HAL_UART_Transmit(), which would collide with the DMA on USART1. */
 static void uart_puts(const char *s)
 {
-  HAL_UART_Transmit(&huart1, (const uint8_t *)s, (uint16_t)strlen(s), 200);
+  debug_uart_write(s, (uint32_t)strlen(s));
 }
 
 /* Append bytes to TX buffer; silently drop what doesn't fit. */
@@ -400,7 +402,7 @@ void tcp_echo_client_poll(void)
   /* 1. Drain RX buffer to debug UART (never blocks TCP callbacks). */
   if (s_rx_len > 0)
   {
-    HAL_UART_Transmit(&huart1, (uint8_t *)s_rx_buf, s_rx_len, 50);
+    debug_uart_write(s_rx_buf, s_rx_len);
 
     {
       uint16_t n = (s_rx_len < LAST_RX_SNAPSHOT_SIZE - 1U) ? s_rx_len : (LAST_RX_SNAPSHOT_SIZE - 1U);

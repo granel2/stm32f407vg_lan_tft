@@ -25,6 +25,7 @@
 #include "stm32f4xx_hal_eth.h"
 #include "tft_app.h"
 #include "can_bus.h"
+#include "debug_uart.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -107,7 +108,7 @@ void HardFault_C_Handler(uint32_t *stackFrame)
            "R2=0x%08lX R3=0x%08lX R12=0x%08lX PSR=0x%08lX\r\n",
            (unsigned long)pc, (unsigned long)lr, (unsigned long)r0, (unsigned long)r1,
            (unsigned long)r2, (unsigned long)r3, (unsigned long)r12, (unsigned long)psr);
-  HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)strlen(msg), 1000);
+  debug_uart_panic(msg);  /* stops the log DMA, prints synchronously */
 
   while (1)
   {
@@ -260,6 +261,14 @@ void DMA1_Stream5_IRQHandler(void)
 void CAN1_RX0_IRQHandler(void)
 {
   can_bus_rx0_irq();
+}
+
+/**
+  * @brief DMA2 Stream7 = USART1_TX, debug log ring (Core/Src/debug_uart.c).
+  */
+void DMA2_Stream7_IRQHandler(void)
+{
+  debug_uart_dma_irq();
 }
 
 /* USER CODE END 1 */

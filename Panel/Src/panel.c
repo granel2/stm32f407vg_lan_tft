@@ -395,6 +395,10 @@ void Panel_Poll(PanelPage page)
 #endif
   panel_sources_update(s_channels, s_external);
 
+  /* Previous widget's pixels still going out by DMA: come back next pass
+     rather than wait for them inside the next draw call. */
+  if (ST7796S_Busy()) { return; }
+
   /* Redraw at most one changed widget per call (round robin). */
   for (uint8_t n = 0U; n < pd->count; n++)
   {

@@ -63,6 +63,10 @@ void     ST7796S_ReadID(uint8_t out[4]);
    only when the frame must be complete before going on (timing, reset). */
 void     ST7796S_FillScreen(uint16_t color);
 void     ST7796S_WaitIdle(void);
+/* 1 while a DMA fill or text line is still going out. Pollers that redraw
+   one item per main-loop pass check this and skip the pass instead of
+   blocking in the next draw call. */
+uint8_t  ST7796S_Busy(void);
 void     ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 /* Hardware smoke test: colour bars, white border and a checkerboard corner.
    Wrong colours / mirrored layout tell which MADCTL bits the panel needs. */

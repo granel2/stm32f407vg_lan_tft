@@ -22,13 +22,15 @@
 #include "lwip/snmp.h"
 #include "ethernetif.h"
 #include "lan8742.h"
+#include "main.h"            /* Debug_Print() */
 #include <stdio.h>
 #include <string.h>
 
-extern UART_HandleTypeDef huart1;
+/* Through main.c's Debug_Print() -> DMA ring (debug_uart.c): a direct
+   HAL_UART_Transmit() here would collide with the DMA on USART1. */
 static void eth_debug(const char *s)
 {
-  HAL_UART_Transmit(&huart1, (const uint8_t *)s, (uint16_t)strlen(s), 50);
+  Debug_Print(s);
 }
 
 /* Define those to better describe your network interface. */

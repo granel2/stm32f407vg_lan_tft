@@ -764,7 +764,9 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
     return;
   }
 
-  if (s_refresh_row != REFRESH_IDLE)
+  /* One row per pass, and only once the previous row's pixels are out
+     (ST7796S_Busy()) - the pass never waits for the display bus. */
+  if ((s_refresh_row != REFRESH_IDLE) && !ST7796S_Busy())
   {
     s_refresh_row = refresh_live_row(s_refresh_row, ip_addr, link_up, ip_src, tcp_state) ?
                     (uint8_t)(s_refresh_row + 1U) : REFRESH_IDLE;

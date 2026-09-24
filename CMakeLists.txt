@@ -74,6 +74,7 @@ set(PROJECT_SOURCES
   Core/Src/ethernetif.c
   Core/Src/sys_arch.c
   Core/Src/tcp_echo_client.c
+  Core/Src/debug_uart.c
   Display/Src/st7796s.c
   Display/Src/tft_app.c
   Display/Src/tft_backlight.c

@@ -277,7 +277,6 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
        restart the LAN8720's crystal oscillator / PLL → enables CLKOUT.
        CR[4:2]=0x14 = Div102 for 160 MHz HCLK (MDC ≈ 1.57 MHz). */
     {
-      extern UART_HandleTypeDef huart1;
       volatile uint32_t *macmiiar = (volatile uint32_t *)0x40028010UL;
       volatile uint32_t *macmiidr = (volatile uint32_t *)0x40028014UL;
       char probe_buf[64];
@@ -300,7 +299,7 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
   while ((*macmiiar & 0x01U) && ((HAL_GetTick()-probe_t) < 100U));      \
 } while (0)
 
-      HAL_UART_Transmit(&huart1, (uint8_t *)"[msp] MDIO scan\r\n", 17, 50);
+      Debug_Print("[msp] MDIO scan\r\n");
 
       /* Scan 0-31 for a responding PHY */
       {
@@ -315,8 +314,7 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
 
       if (found_addr == 0xFFUL)
       {
-        HAL_UART_Transmit(&huart1,
-          (uint8_t *)"[msp] no PHY (all 0xFFFF)\r\n", 27, 100);
+        Debug_Print("[msp] no PHY (all 0xFFFF)\r\n");
       }
       else
       {
@@ -331,14 +329,12 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
                  "[msp] PHY@%u ID2=%04X BCR=%04X BSR=%04X MCSR=%04X SMR=%04X\r\n",
                  (unsigned)found_addr, (unsigned)id2,
                  (unsigned)bcr, (unsigned)bsr, (unsigned)mcsr, (unsigned)smr);
-        HAL_UART_Transmit(&huart1, (uint8_t *)probe_buf,
-                          (uint16_t)strlen(probe_buf), 200);
+        Debug_Print(probe_buf);
 
         /* If power-down is set (BCR bit 11), clear it first */
         if (bcr & 0x0800U)
         {
-          HAL_UART_Transmit(&huart1,
-            (uint8_t *)"[msp] PHY power-down! Waking...\r\n", 33, 100);
+          Debug_Print("[msp] PHY power-down! Waking...\r\n");
           MDIO_WR(found_addr, 0, bcr & ~0x0800U);
           HAL_Delay(50);
         }

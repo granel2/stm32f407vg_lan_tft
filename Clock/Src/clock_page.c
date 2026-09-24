@@ -187,6 +187,10 @@ void Clock_PagePoll(void)
   uint8_t   now_digit[6];
   uint8_t   drew = 0U;
 
+  if (ST7796S_Busy())
+  {
+    return;  /* previous item still going out by DMA - next pass */
+  }
   if (clock_get(&t))
   {
     now_digit[0] = (uint8_t)(t.hour / 10U); now_digit[1] = (uint8_t)(t.hour % 10U);

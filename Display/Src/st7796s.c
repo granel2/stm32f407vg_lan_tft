@@ -14,6 +14,13 @@
   * for it (dma_wait()), so callers never see the difference - except that
   * the CPU is free in between. Use ST7796S_WaitIdle() when the frame has to
   * be on the glass before going on (timing, reset).
+  *
+  * Text goes the same way: DrawString()/DrawChar() set the RAM window, then
+  * the string's pixel lines are streamed by DMA from two line buffers - the
+  * SPI-complete interrupt starts the next line and renders the one after it
+  * into the other buffer while that line is on the wire. The call returns
+  * after ~20 us instead of the ~2-4 ms a line of text takes on the bus;
+  * ST7796S_Busy() lets a caller skip a pass instead of waiting.
   ******************************************************************************
   */
 
@@ -69,6 +76,21 @@ static volatile uint8_t  dma_busy;
 static volatile uint32_t dma_left;   /* pixels not yet handed to the DMA */
 static uint16_t          dma_color;
 
+/* DMA text job (blit_text() -> text_next() in HAL_SPI_TxCpltCallback()).
+   The string is copied and its glyphs looked up at start, so the caller's
+   buffer may go away and the interrupt never searches the font table. */
+#define TEXT_MAX_CHARS  (FILL_BUF_PIXELS / 6U)    /* 80 chars at scale 1 */
+static volatile uint8_t  txt_active;
+static const uint8_t    *txt_glyph[TEXT_MAX_CHARS];  /* NULL = blank cell */
+static uint16_t          txt_len;
+static uint16_t          txt_w;         /* pixels per line */
+static uint16_t          txt_fg, txt_bg;
+static uint8_t           txt_scale;
+static uint8_t           txt_row;       /* glyph row being sent, 0..6 */
+static uint8_t           txt_rep;       /* times this row was sent (scale) */
+static uint8_t           txt_cur;       /* line_buf[] index on the wire */
+static uint16_t          line_buf[2][FILL_BUF_PIXELS];
+
 /* ---- low-level helpers ------------------------------------------------- */
 
 static inline void cs_low(void)  { HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_RESET); }
@@ -122,6 +144,73 @@ static void dma_next_chunk(void)
   }
 }
 
+/* Fills re-send one colour word (memory increment off); text streams a
+   line buffer (on). The stream is idle between transfers, so MINC can be
+   flipped directly in its CR. */
+static void dma_mem_inc(uint8_t on)
+{
+  if (on) { tft_spi->hdmatx->Instance->CR |=  DMA_SxCR_MINC; }
+  else    { tft_spi->hdmatx->Instance->CR &= ~DMA_SxCR_MINC; }
+}
+
+/* Render glyph row `row` of the current text job into line_buf[b] */
+static void text_render(uint8_t b, uint8_t row)
+{
+  uint16_t *p = line_buf[b];
+
+  for (uint16_t i = 0; i < txt_len; i++)
+  {
+    const uint8_t bits  = (txt_glyph[i] != NULL) ? txt_glyph[i][row] : 0U;
+    const uint8_t ncols = (i == (uint16_t)(txt_len - 1U)) ? 5U : 6U;  /* no gap after the last one */
+
+    for (uint8_t col = 0; col < ncols; col++)
+    {
+      const uint16_t c = (col < 5U) && (((bits >> (4U - col)) & 1U) != 0U) ? txt_fg : txt_bg;
+
+      for (uint8_t k = 0; k < txt_scale; k++) { *p++ = c; }
+    }
+  }
+}
+
+static void text_finish(void)
+{
+  txt_active = 0U;
+  dma_mem_inc(0U);
+  spi_frame16(0U);
+  cs_high();
+  dma_busy = 0U;
+}
+
+static void text_send(void)
+{
+  if (HAL_SPI_Transmit_DMA(tft_spi, (uint8_t *)line_buf[txt_cur], txt_w) != HAL_OK)
+  {
+    text_finish();  /* give the rest up rather than hang dma_wait() */
+  }
+}
+
+/* Interrupt: one pixel line of the text job is out - send the next one */
+static void text_next(void)
+{
+  if (++txt_rep < txt_scale)
+  {
+    text_send();        /* same line again (scale > 1) */
+    return;
+  }
+  txt_rep = 0U;
+  if (++txt_row >= 7U)
+  {
+    text_finish();
+    return;
+  }
+  txt_cur ^= 1U;        /* already holds txt_row */
+  text_send();
+  if (txt_row < 6U)
+  {
+    text_render((uint8_t)(txt_cur ^ 1U), (uint8_t)(txt_row + 1U));  /* while this one is on the wire */
+  }
+}
+
 /* Block until a DMA fill started by FillRect() is on the wire and CS is
    released. Every function that touches the bus calls this first. */
 static void dma_wait(void)
@@ -135,6 +224,11 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
   if ((tft_spi == NULL) || (hspi != tft_spi))
   {
+    return;
+  }
+  if (txt_active)
+  {
+    text_next();
     return;
   }
   if (dma_left > 0U)
@@ -156,6 +250,11 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
   }
   /* Only reachable through a DMA error (SPI3_IRQn is left off, see
      HAL_SPI_MspInit()); HAL has already stopped the stream. */
+  if (txt_active)
+  {
+    text_finish();
+    return;
+  }
   dma_left = 0U;
   spi_frame16(0U);
   cs_high();
@@ -336,6 +435,7 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
     dma_left  = remaining;
     dma_busy  = 1U;
     spi_frame16(1U);
+    dma_mem_inc(0U);
     dma_next_chunk();
     return;
   }
@@ -358,6 +458,11 @@ void ST7796S_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
 void ST7796S_WaitIdle(void)
 {
   dma_wait();
+}
+
+uint8_t ST7796S_Busy(void)
+{
+  return dma_busy;
 }
 
 void ST7796S_FillScreen(uint16_t color)
@@ -560,53 +665,44 @@ static const uint8_t *glyph_rows(char c)
   return NULL;
 }
 
-/* Text fast path: the whole string as ONE RAM window, streamed a pixel
-   line at a time from fill_buf - one CASET/RASET/RAMWR per string instead
-   of one per run of equal pixels (~20 per glyph at scale 2). Also paints
-   the 1-px (x scale) gaps between characters with bg, but not the one
-   after the last character, so nothing outside the old footprint is
-   touched. Caller guarantees the box is on screen and one pixel line fits
-   fill_buf (text_fits()). Unknown characters come out as blank cells. */
+/* Text fast path: the whole string as ONE RAM window, its pixel lines
+   streamed by DMA (see the file header). Also paints the 1-px (x scale)
+   gaps between characters with bg, but not the one after the last
+   character, so nothing outside the old footprint is touched. Returns as
+   soon as the first line is on its way. Caller guarantees the box is on
+   screen and one pixel line fits a line buffer (text_fits()), and that
+   the bus is idle (dma_wait()). Unknown characters come out blank. */
 static void blit_text(uint16_t x, uint16_t y, const char *str, uint16_t len,
                       uint16_t color, uint16_t bg, uint8_t s)
 {
-  const uint16_t w  = (uint16_t)(len * 6U * s - s);
-  const uint8_t  fh = (uint8_t)(color >> 8), fl = (uint8_t)color;
-  const uint8_t  bh = (uint8_t)(bg >> 8),    bl = (uint8_t)bg;
+  txt_len   = len;
+  txt_w     = (uint16_t)(len * 6U * s - s);
+  txt_fg    = color;
+  txt_bg    = bg;
+  txt_scale = s;
+  for (uint16_t i = 0; i < len; i++)
+  {
+    txt_glyph[i] = glyph_rows(str[i]);
+  }
+  text_render(0U, 0U);
+  text_render(1U, 1U);
+  txt_row = 0U;
+  txt_rep = 0U;
+  txt_cur = 0U;
 
-  set_window(x, y, (uint16_t)(x + w - 1U), (uint16_t)(y + 7U * s - 1U));
+  set_window(x, y, (uint16_t)(x + txt_w - 1U), (uint16_t)(y + 7U * s - 1U));
 
   cs_low();
   dc_cmd();
   { uint8_t c = CMD_RAMWR; spi_tx(&c, 1U); }
   dc_data();
-  for (uint8_t row = 0; row < 7U; row++)
-  {
-    uint8_t *p = fill_buf;
 
-    for (uint16_t i = 0; i < len; i++)
-    {
-      const uint8_t *g     = glyph_rows(str[i]);
-      const uint8_t  bits  = (g != NULL) ? g[row] : 0U;
-      const uint8_t  ncols = (i == (uint16_t)(len - 1U)) ? 5U : 6U;  /* no gap after the last one */
-
-      for (uint8_t col = 0; col < ncols; col++)
-      {
-        const uint8_t on = (col < 5U) ? (uint8_t)((bits >> (4U - col)) & 1U) : 0U;
-
-        for (uint8_t k = 0; k < s; k++)
-        {
-          *p++ = on ? fh : bh;
-          *p++ = on ? fl : bl;
-        }
-      }
-    }
-    for (uint8_t k = 0; k < s; k++)
-    {
-      spi_tx(fill_buf, (uint32_t)w * 2U);
-    }
-  }
-  cs_high();
+  /* 16-bit frames go out MSB first = RGB565 as stored in line_buf */
+  dma_busy   = 1U;
+  txt_active = 1U;
+  spi_frame16(1U);
+  dma_mem_inc(1U);
+  text_send();
 }
 
 /* True when a len-character string at (x,y) can go through blit_text() */
@@ -614,7 +710,7 @@ static uint8_t text_fits(uint16_t x, uint16_t y, uint32_t len, uint8_t s)
 {
   const uint32_t w = len * 6U * s - s;
 
-  return (uint8_t)((len > 0U) && (w <= FILL_BUF_PIXELS) &&
+  return (uint8_t)((len > 0U) && (len <= TEXT_MAX_CHARS) && (w <= FILL_BUF_PIXELS) &&
                    ((uint32_t)x + w <= tft_width) && ((uint32_t)y + 7U * s <= tft_height));
 }
 
