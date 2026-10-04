@@ -100,6 +100,21 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
   */
 void TFT_App_ShowReceived(const char *text);
 
+/**
+  * @brief  User activity from outside the page button (keypad input): full
+  *         backlight again and the idle-dim timer restarts.
+  */
+void TFT_App_UserActivity(void);
+
+/**
+  * @brief  Page switching from outside the page button (keypad commands).
+  *         TFT_App_NextPage(): the page after the current one, wrapping.
+  *         TFT_App_ShowPage(): page `number` as shown in the "n/N" indicator
+  *         (1-based); returns 0 and does nothing if there is no such page.
+  */
+void    TFT_App_NextPage(void);
+uint8_t TFT_App_ShowPage(uint8_t number);
+
 #ifdef __cplusplus
 }
 #endif

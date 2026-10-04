@@ -10,6 +10,7 @@ STM32F407VGT6 + LAN8720 (Ethernet, lwIP, DHCP, TCP-клиент) + 3.5" TFT-ди
 | `Core/Inc`, `Core/Src`, `Core/Startup` | Ethernet/lwIP-часть: HAL MSP, прерывания, lwIP-порт (`ethernetif.c`), TCP-клиент, `main.c` |
 | `Display/` | Весь дисплейный модуль, обособлен от Ethernet-кода — см. `Display/README.md` |
 | `Config/` | Постоянные настройки (сервер/имя/статический IP) + веб-страница настройки `http://<IP модуля>/` (порт 80) + TCP-конфигуратор на порту 7000 — см. `Config/README.md` |
+| `Keypad/` | Приём пакетов от модуля клавиатуры 4×4 (ATmega328P) на SV5: I2C1-ведомый `0x30`, на регистрах — см. `Keypad/README.md` |
 | `Drivers/` | STM32Cube HAL F4 V1.28.3, CMSIS, драйвер PHY lan8742 |
 | `Middlewares/Third_Party/LwIP` | lwIP (NO_SYS=1) |
 | `CMakeLists.txt`, `CMakePresets.json`, `toolchain-arm-none-eabi.cmake`, `linker_script.ld` | Сборка |

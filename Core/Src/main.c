@@ -40,6 +40,7 @@
 #include "clock.h"
 #include "can_bus.h"
 #include "diag_can.h"
+#include "keypad.h"
 #include "debug_uart.h"
 /* USER CODE END Includes */
 
@@ -80,6 +81,48 @@ static void netif_status_callback(struct netif *netif);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* Keypad commands for the display. A group ended by '#':
+     no characters     -> next page ("#")
+     1..3 digits       -> that page, as in the "n/N" indicator ("3#", "12#");
+                          a number with no such page is ignored
+   Anything else is ordinary input: passwords are at least 4 digits or start
+   with a letter, so they never look like a page command. Digits before '#',
+   not after: the module sends a group only when '#' ends it. */
+#define KBD_PAGE_CMD_MAX_DIGITS  3U
+
+static void on_keypad(const KeypadPacket *p)
+{
+  uint16_t number = 0U;
+  uint8_t  n;
+
+  if ((p->type != KBD_PKT_GROUP) || (p->len == 0U) || (p->data[0] != KBD_END_ENTER))
+  {
+    return;
+  }
+  n = (uint8_t)(p->len - 1U);                 /* characters after the reason byte */
+  if (n == 0U)
+  {
+    TFT_App_NextPage();
+    return;
+  }
+  if (n > KBD_PAGE_CMD_MAX_DIGITS)
+  {
+    return;
+  }
+  for (uint8_t i = 1U; i <= n; i++)
+  {
+    if ((p->data[i] < (uint8_t)'0') || (p->data[i] > (uint8_t)'9'))
+    {
+      return;                                 /* a letter: not a page command */
+    }
+    number = (uint16_t)(number * 10U + (uint16_t)(p->data[i] - (uint8_t)'0'));
+  }
+  if (number <= 255U)
+  {
+    (void)TFT_App_ShowPage((uint8_t)number);  /* 0 or past the last page: ignored */
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -172,6 +215,8 @@ int main(void)
   clock_init();     /* Clock/: NTP time for the CLOCK page, see clock_config.h */
   diag_can_init();      /* Diag/: CAN loopback self-test if DIAG_CAN_LOOPBACK */
   (void)can_bus_init(); /* CAN/: CAN1 on J3, receive + log, see can_config.h */
+  keypad_init();        /* Keypad/: I2C1 slave on SV5, 4x4 keypad module, see keypad_config.h */
+  keypad_set_handler(on_keypad);  /* '#' / 'N#' switch display pages */
   diag_cpu_init();  /* Diag/: main-loop load stats, see diag_config.h */
   /* USER CODE END 2 */
 
@@ -240,6 +285,7 @@ int main(void)
 
     can_bus_poll();  /* CAN1 RX queue -> log/handler, bus state */
     diag_can_poll();  /* loopback self-test step (empty stub when off) */
+    keypad_poll();    /* keypad packets from the I2C1 interrupt -> log/handler */
 
     /* DHCP fallback: in DHCP mode, if the link is up but no DHCP server has
        answered within DHCP_FALLBACK_MS, take the configured static IP ("IP

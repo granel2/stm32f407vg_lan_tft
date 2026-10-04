@@ -25,6 +25,7 @@
 #include "stm32f4xx_hal_eth.h"
 #include "tft_app.h"
 #include "can_bus.h"
+#include "keypad.h"
 #include "debug_uart.h"
 #include <stdio.h>
 #include <string.h>
@@ -261,6 +262,20 @@ void DMA1_Stream5_IRQHandler(void)
 void CAN1_RX0_IRQHandler(void)
 {
   can_bus_rx0_irq();
+}
+
+/**
+  * @brief I2C1 slave = keypad module on SV5 (Keypad/Src/keypad.c).
+  * Hand-added like ETH above - I2C1 is not in the .ioc.
+  */
+void I2C1_EV_IRQHandler(void)
+{
+  keypad_ev_irq();
+}
+
+void I2C1_ER_IRQHandler(void)
+{
+  keypad_er_irq();
 }
 
 /**

@@ -15,6 +15,7 @@
 #include "panel.h"
 #include "diag_cpu.h"
 #include "clock_page.h"
+#include "keypad_page.h"
 #include "tft_backlight.h"
 #include "device_config.h"
 #include "st7796s.h"
@@ -113,7 +114,8 @@ void TFT_App_SPI3_Init(void)
  * Pages (TFT_Page): SETUP (link/DHCP/IP/server/TCP/uptime/frame-time),
  * RECEIVED (the full last TCP message, wrapped/multi-line), REMOTE and
  * LOCAL (instrument pages - gauges, readouts, sliders, lamps, buttons - drawn
- * by Panel/, see Panel/Inc/panel.h), CLOCK (NTP time, Clock/), and CPU (main-loop load, only when
+ * by Panel/, see Panel/Inc/panel.h), CLOCK (NTP time, Clock/), I2C KBD (keypad
+ * packets line by line, Keypad/), KBD HELP (its legend), and CPU (main-loop load, only when
  * DIAG_CPU_PAGE is on - Diag/Inc/diag_config.h). Cycled by a physical button on TFT_PAGEBTN_Pin
  * (PC6/SV1.7, active low, internal pull-up - see TFT_App_GPIO_Init()).
  *
@@ -131,6 +133,8 @@ typedef enum
   TFT_PAGE_REMOTE,     /* Panel/ PANEL_PAGE_REMOTE */
   TFT_PAGE_LOCAL,      /* Panel/ PANEL_PAGE_LOCAL  */
   TFT_PAGE_CLOCK,      /* Clock/ NTP clock, see clock_page.h */
+  TFT_PAGE_KBD,        /* Keypad/ packets from the keypad module on I2C1, see keypad_page.h */
+  TFT_PAGE_KBD_HELP,   /* Keypad/ legend for the I2C KBD lines */
 #if DIAG_CPU_PAGE
   TFT_PAGE_CPU,        /* Diag/ main-loop load, see diag_cpu.h */
 #endif
@@ -445,6 +449,18 @@ static void draw_page_static(TFT_Page page)
       draw_page_chrome("CLOCK", TFT_PAGE_CLOCK);
       Clock_PageDraw();
       break;
+    case TFT_PAGE_KBD:
+    {
+      char title[16];
+      snprintf(title, sizeof(title), "I2C KBD 0x%02X", (unsigned)KBD_HOST_ADDR);  /* our slave address */
+      draw_page_chrome(title, TFT_PAGE_KBD);
+      Keypad_PageDraw();
+      break;
+    }
+    case TFT_PAGE_KBD_HELP:
+      draw_page_chrome("KBD HELP", TFT_PAGE_KBD_HELP);
+      Keypad_HelpDraw();
+      break;
 #if DIAG_CPU_PAGE
     case TFT_PAGE_CPU:      draw_page_cpu_static();      break;
 #endif
@@ -535,6 +551,18 @@ static void backlight_poll(void)
   {
     TFT_Backlight_Set(want);
   }
+}
+
+/**
+  * @brief  Someone is using the device (keypad input etc.): back to the full
+  *         backlight level and restart the idle-dim timer - what a page-button
+  *         press does, minus the page switch. Cheap; backlight_poll() applies
+  *         the level on the next TFT_App_AlivePoll().
+  */
+void TFT_App_UserActivity(void)
+{
+  s_last_activity = HAL_GetTick();
+  s_dimmed = 0U;
 }
 
 /**
@@ -701,9 +729,36 @@ static uint8_t refresh_live_row(uint8_t idx, uint32_t ip_addr, uint8_t link_up, 
   *                    code added to tcp_echo_client.c fails safe here
   *                    instead of printing a raw letter.
   */
+/* Next 1 Hz refresh in TFT_App_AlivePoll(); file scope so a page switch from
+   outside (show_page()) can pull it in to "now". */
+static uint32_t s_next_tick;
+
+/* Switches to `page` and draws it; its live fields follow on the next
+   TFT_App_AlivePoll() instead of up to 1 s later. */
+static void show_page(TFT_Page page)
+{
+  s_page = page;
+  draw_page_static(s_page);
+  s_next_tick = HAL_GetTick();
+}
+
+void TFT_App_NextPage(void)
+{
+  show_page((TFT_Page)(((unsigned)s_page + 1U) % (unsigned)TFT_PAGE_COUNT));
+}
+
+uint8_t TFT_App_ShowPage(uint8_t number)
+{
+  if ((number == 0U) || (number > (uint8_t)TFT_PAGE_COUNT))
+  {
+    return 0U;
+  }
+  show_page((TFT_Page)(number - 1U));
+  return 1U;
+}
+
 void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_state)
 {
-  static uint32_t next_tick = 0;
 
   /* Page button - checked every call (not gated by the 1 Hz limiter below)
      for a responsive UI. Debounced by time rather than multi-sampling:
@@ -729,10 +784,7 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
         }
         else
         {
-          s_page = (TFT_Page)(((unsigned)s_page + 1U) % (unsigned)TFT_PAGE_COUNT);
-          draw_page_static(s_page);
-          next_tick = HAL_GetTick();  /* redraw this page's live fields below right
-                                          away instead of waiting up to 1 s */
+          TFT_App_NextPage();
         }
       }
     }
@@ -745,15 +797,17 @@ void TFT_App_AlivePoll(uint32_t ip_addr, uint8_t link_up, char ip_src, char tcp_
   if (s_page == TFT_PAGE_REMOTE) { Panel_Poll(PANEL_PAGE_REMOTE); }
   if (s_page == TFT_PAGE_LOCAL)  { Panel_Poll(PANEL_PAGE_LOCAL); }
   if (s_page == TFT_PAGE_CLOCK)  { Clock_PagePoll(); }  /* redraws only what changed */
+  if (s_page == TFT_PAGE_KBD)    { Keypad_PagePoll(); } /* one row per call */
+  if (s_page == TFT_PAGE_KBD_HELP) { Keypad_HelpPoll(); }
 
   /* Once a second: heartbeat square, then a sweep over the page's live
      rows - ONE row per call, not all at once. A 16-char value row at
      scale 2 is ~5 kB (~2.5 ms on the bus); drawing all of them in one go
      held the main loop for tens of ms (54 ms on the CPU page, measured by
      Diag/), and Ethernet waits for the whole of it. */
-  if ((int32_t)(HAL_GetTick() - next_tick) >= 0)
+  if ((int32_t)(HAL_GetTick() - s_next_tick) >= 0)
   {
-    next_tick = HAL_GetTick() + 1000U;
+    s_next_tick = HAL_GetTick() + 1000U;
     s_blink_phase ^= 1U;
     ST7796S_FillRect(STATUS_BLINK_X, STATUS_BLINK_Y, 40U, 40U, s_blink_phase ? ST7796S_GREEN : ST7796S_RED);
 #if DIAG_CPU_PAGE
