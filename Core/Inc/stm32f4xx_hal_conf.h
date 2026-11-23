@@ -204,8 +204,8 @@
 /* ################## Ethernet peripheral configuration ##################### */
 
 /* MAC ADDRESS: ETH_MAC_ADDR0:ETH_MAC_ADDR1:ETH_MAC_ADDR2:ETH_MAC_ADDR3:ETH_MAC_ADDR4:ETH_MAC_ADDR5 */
-/* Locally administered address (0x02 in the first byte) - fine as a default for a single
-   device on the LAN; change ETH_MAC_ADDR5 if you deploy more than one board on the same network. */
+/* NOT USED by this project: the MAC is derived per chip from the UID at run time - see
+   Core/Inc/board_mac.h. Kept only because CubeMX regenerates this block. */
 #define ETH_MAC_ADDR0   ((uint8_t)0x02U)
 #define ETH_MAC_ADDR1   ((uint8_t)0x00U)
 #define ETH_MAC_ADDR2   ((uint8_t)0x00U)

@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 #include "stm32f4xx_hal.h"
+#include "board_mac.h"
 
 #define DEVICE_CONFIG_MAGIC          0x43464731U  /* ASCII "CFG1" */
 #define DEVICE_CONFIG_VERSION        2U
@@ -32,7 +33,7 @@
 #define DEFAULT_SERVER_IP2  1U
 #define DEFAULT_SERVER_IP3  16U
 #define DEFAULT_SERVER_PORT 5000U
-#define DEFAULT_NAME        "stm32f407"
+/* Default name: "stm32f407-XXXX", unique per chip - see board_mac.h */
 /* Static IP / "IP по умолчанию": used in static mode, and in DHCP mode as the
    fallback address when no DHCP server answers (see main.c). */
 #define DEFAULT_STATIC_IP   {192U, 168U, 1U, 100U}
@@ -102,7 +103,7 @@ static void set_defaults(DeviceConfig *cfg)
   cfg->server_ip[2] = DEFAULT_SERVER_IP2;
   cfg->server_ip[3] = DEFAULT_SERVER_IP3;
   cfg->server_port  = DEFAULT_SERVER_PORT;
-  snprintf(cfg->name, sizeof(cfg->name), DEFAULT_NAME);
+  board_default_name(cfg->name, sizeof(cfg->name));
   cfg->use_static_ip = 0U;
   memcpy(cfg->static_ip,      k_default_ip,   4U);
   memcpy(cfg->static_netmask, k_default_mask, 4U);
@@ -157,6 +158,14 @@ void device_config_load(void)
   else if (migrate_v1(flash_cfg) == 0U)
   {
     set_defaults(&s_config);
+  }
+
+  /* Saved by firmware older than board_mac, with the old shared default
+     name: give this module its unique one (RAM only - Flash is rewritten
+     only by the next Save, as for any other setting). */
+  if (strcmp(s_config.name, BOARD_LEGACY_DEFAULT_NAME) == 0)
+  {
+    board_default_name(s_config.name, sizeof(s_config.name));
   }
 }
 

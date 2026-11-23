@@ -18,6 +18,7 @@
 #include "keypad_page.h"
 #include "tft_backlight.h"
 #include "device_config.h"
+#include "board_mac.h"
 #include "st7796s.h"
 #include "main.h"
 
@@ -160,8 +161,11 @@ typedef enum
 #define STATUS_Y_TCP       180U
 #define STATUS_Y_UPTIME    210U
 #define STATUS_Y_FRAME     240U
-#define STATUS_Y_CHIPID    270U   /* CRC32 of the 96-bit chip ID - see stm32_uid_crc32() */
+#define STATUS_Y_CHIPID    270U   /* CRC32 of the 96-bit chip ID - see board_chip_id() */
 #define STATUS_Y_NAME      300U   /* device_config's name field - static, set once from main.c */
+#define STATUS_Y_MAC       330U   /* Ethernet MAC, 02:00:<CHIP ID> - see board_mac.h */
+#define STATUS_MAC_X       (STATUS_LABEL_X + 5U * 12U)  /* "MAC: " - the 17-char value
+                                     doesn't fit the usual 16-char value column */
 
 /* STM32F4's 96-bit factory-programmed unique device ID: three consecutive
    32-bit words in OTP, memory-mapped read-only - no peripheral clock or
@@ -172,47 +176,8 @@ static inline uint32_t stm32_uid_word(uint8_t index)
   return *(const volatile uint32_t *)(uintptr_t)(STM32_UID_BASE + ((uint32_t)index * 4U));
 }
 
-/* Standard reflected CRC-32 (poly 0xEDB88320, init/final XOR 0xFFFFFFFF) -
-   the same algorithm as zlib's crc32()/Python's binascii.crc32()/`cksum`,
-   so the 8-hex-digit result on screen can be cross-checked with any of
-   those against the full ID logged over UART. Bit-by-bit, no lookup
-   table: this only ever runs once, over 12 bytes, so a 256-entry table
-   would just spend FLASH for no measurable speed benefit here. */
-static uint32_t crc32_compute(const uint8_t *data, uint32_t len)
-{
-  uint32_t crc = 0xFFFFFFFFU;
-
-  for (uint32_t i = 0; i < len; i++)
-  {
-    crc ^= data[i];
-    for (uint8_t bit = 0; bit < 8U; bit++)
-    {
-      crc = ((crc & 1U) != 0U) ? ((crc >> 1) ^ 0xEDB88320U) : (crc >> 1);
-    }
-  }
-  return crc ^ 0xFFFFFFFFU;
-}
-
-/* CRC32 over the UID's 12 raw bytes, each 32-bit word taken big-endian
-   (matches the byte order the hex log/other tools would see reading the
-   three words as one 96-bit big-endian number) - a short, still
-   collision-resistant stand-in for the unwieldy 24-hex-digit full ID
-   (see Display/README.md for why: STM32's LOT_NUM field often looks like
-   plain decimal text rather than "random" hex, per RM0090 39.1). */
-static uint32_t stm32_uid_crc32(void)
-{
-  uint8_t bytes[12];
-
-  for (uint8_t w = 0; w < 3U; w++)
-  {
-    uint32_t word = stm32_uid_word(w);
-    bytes[(w * 4U) + 0U] = (uint8_t)(word >> 24);
-    bytes[(w * 4U) + 1U] = (uint8_t)(word >> 16);
-    bytes[(w * 4U) + 2U] = (uint8_t)(word >> 8);
-    bytes[(w * 4U) + 3U] = (uint8_t)(word);
-  }
-  return crc32_compute(bytes, sizeof(bytes));
-}
+/* CHIP ID (CRC32 of the UID) comes from board_chip_id() - Core/Inc/board_mac.h -
+   the same value the MAC address and default device name are built from. */
 
 /* RECEIVED page: "LAST MSG:" label + up to STATUS_RX_MAX_ROWS wrapped rows.
    A whole page to itself now, so this can be much taller than when it had
@@ -372,6 +337,7 @@ static void draw_page_setup_static(void)
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_FRAME,  "FRAME:",  ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_CHIPID, "CHIP ID:", ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
   ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_NAME,   "NAME:",    ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
+  ST7796S_DrawString(STATUS_LABEL_X, STATUS_Y_MAC,    "MAC:",     ST7796S_WHITE, ST7796S_BLACK, STATUS_FONT_SCALE);
 
   status_draw_value(STATUS_Y_SERVER, s_server_str);
   status_draw_value(STATUS_Y_NAME,   s_device_name);
@@ -382,14 +348,23 @@ static void draw_page_setup_static(void)
   }
   {
     /* CRC32 of the 96-bit unique ID: 8 hex digits, fits one line (unlike
-       the raw 24-digit ID - see stm32_uid_crc32()'s comment for why this
+       the raw 24-digit ID - see Display/README.md for why this
        is what's shown instead of the full value). Read-only/derived from
        OTP, set at the factory - never changes, so (like SERVER:/FRAME:
        above) this is drawn once here, not refreshed by
        TFT_App_AlivePoll(). */
     char msg[16];
-    snprintf(msg, sizeof(msg), "%08lX", (unsigned long)stm32_uid_crc32());
+    snprintf(msg, sizeof(msg), "%08lX", (unsigned long)board_chip_id());
     status_draw_value(STATUS_Y_CHIPID, msg);
+  }
+  {
+    uint8_t mac[6];
+    char msg[20];
+
+    board_mac_get(mac);
+    snprintf(msg, sizeof(msg), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    status_draw_field(STATUS_MAC_X, STATUS_Y_MAC, 17U, ST7796S_CYAN, msg);
   }
   /* LINK/DHCP/IP/TCP/UPTIME are left blank here - TFT_App_AlivePoll() fills
      them in on its very next call (forced immediately after a page switch,
@@ -625,7 +600,7 @@ void TFT_App_SmokeTest(const char *server_str, const char *device_name)
   snprintf(s_device_name, sizeof(s_device_name), "%s", device_name);
   snprintf(msg, sizeof(msg), "[tft] chip UID = %08lX%08lX%08lX (CRC32 %08lX)\r\n",
            (unsigned long)stm32_uid_word(0), (unsigned long)stm32_uid_word(1), (unsigned long)stm32_uid_word(2),
-           (unsigned long)stm32_uid_crc32());
+           (unsigned long)board_chip_id());
   Debug_Print(msg);
   s_page = TFT_PAGE_SETUP;
   draw_page_static(s_page);

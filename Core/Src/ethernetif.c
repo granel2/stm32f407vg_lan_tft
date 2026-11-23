@@ -23,6 +23,8 @@
 #include "ethernetif.h"
 #include "lan8742.h"
 #include "main.h"            /* Debug_Print() */
+#include "board_mac.h"       /* per-chip MAC from the UID */
+#include "device_config.h"   /* DHCP hostname = device name */
 #include <stdio.h>
 #include <string.h>
 
@@ -267,8 +269,10 @@ static void low_level_init(struct netif *netif)
   uint32_t duplex, speed = 0;
   int32_t PHYLinkState = 0;
   ETH_MACConfigTypeDef MACConf = {0};
-  uint8_t macaddress[6] = {ETH_MAC_ADDR0, ETH_MAC_ADDR1, ETH_MAC_ADDR2,
-                            ETH_MAC_ADDR3, ETH_MAC_ADDR4, ETH_MAC_ADDR5};
+  /* static: HAL_ETH_Init() keeps the pointer (heth->Init.MACAddr) */
+  static uint8_t macaddress[6];
+
+  board_mac_get(macaddress);
 
   EthHandle.Instance = ETH;
   EthHandle.Init.MACAddr = macaddress;
@@ -368,12 +372,13 @@ static void low_level_init(struct netif *netif)
   eth_debug("[eth] HAL_ETH_Init OK\r\n");
 
   netif->hwaddr_len = ETH_HWADDR_LEN;
-  netif->hwaddr[0] = ETH_MAC_ADDR0;
-  netif->hwaddr[1] = ETH_MAC_ADDR1;
-  netif->hwaddr[2] = ETH_MAC_ADDR2;
-  netif->hwaddr[3] = ETH_MAC_ADDR3;
-  netif->hwaddr[4] = ETH_MAC_ADDR4;
-  netif->hwaddr[5] = ETH_MAC_ADDR5;
+  memcpy(netif->hwaddr, macaddress, ETH_HWADDR_LEN);
+  {
+    char mac_msg[40];
+    snprintf(mac_msg, sizeof(mac_msg), "[eth] MAC %02X:%02X:%02X:%02X:%02X:%02X\r\n",
+             macaddress[0], macaddress[1], macaddress[2], macaddress[3], macaddress[4], macaddress[5]);
+    eth_debug(mac_msg);
+  }
 
   netif->mtu = ETH_MAX_PAYLOAD;
   netif->flags |= NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP;
@@ -749,7 +754,9 @@ err_t ethernetif_init(struct netif *netif)
   LWIP_ASSERT("netif != NULL", (netif != NULL));
 
 #if LWIP_NETIF_HOSTNAME
-  netif->hostname = "stm32f407";
+  /* Device name from the config (unique per chip by default, see
+     board_mac.h) - shows up in the router's DHCP client list. */
+  netif->hostname = device_config_get()->name;
 #endif
 
   netif->name[0] = IFNAME0;
